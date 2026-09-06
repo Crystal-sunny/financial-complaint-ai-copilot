@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 
 const suite = process.argv[2] ?? 'v3';
-assert.match(suite, /^v[345]$/);
+assert.match(suite, /^v[3456]$/);
 const appEvalDirectory = new URL('../evals/', import.meta.url);
 const reportDirectory = new URL('../../evals/results/', import.meta.url);
 const datasetText = await readFile(

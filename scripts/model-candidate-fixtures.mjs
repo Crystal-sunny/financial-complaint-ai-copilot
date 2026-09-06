@@ -12,7 +12,7 @@ const identityFields = {
 
 // Offline preparation only. Does not call the investigation pipeline or provider.
 export function prepareCandidate(sample) {
-  assert.match(sample.id, /^EVAL-V(?:2|3|4|5)-\d{3}$/);
+  assert.match(sample.id, /^EVAL-V(?:2|3|4|5|6)-\d{3}$/);
   const database = structuredClone(mockDatabase);
   const base = database.cases.find((item) => item.caseId === sample.baseCaseId);
   assert.ok(base, 'Unknown base case');
@@ -29,6 +29,18 @@ export function prepareCandidate(sample) {
   for (const [key, value] of Object.entries(sample.casePatch ?? {})) {
     assert.ok(['loanId', 'receivedAt'].includes(key));
     context[key] = value;
+  }
+  for (const addition of sample.additions ?? []) {
+    const identity = identityFields[addition.collection];
+    assert.ok(identity, 'Unknown data collection');
+    const records = database[addition.collection];
+    assert.ok(addition.record && typeof addition.record === 'object');
+    assert.ok(Object.hasOwn(addition.record, identity), 'Missing identity field');
+    assert.ok(
+      !records.some((record) => record[identity] === addition.record[identity]),
+      'Duplicate added record identity',
+    );
+    records.push(structuredClone(addition.record));
   }
   for (const patch of sample.overrides) {
     const identity = identityFields[patch.collection];

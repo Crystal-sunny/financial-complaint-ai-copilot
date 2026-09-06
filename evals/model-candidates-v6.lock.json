@@ -1,0 +1,27 @@
+{
+  "version": "model-candidates-v6.0",
+  "lockedAt": "2026-09-06T03:18:31.325Z",
+  "datasetSha256": "88b9a79c8b433595eb9f2953e66c216026e7a7f66ac50b2c402761cdfbb5f51a",
+  "batches": {
+    "holdout-1": [
+      "EVAL-V6-001",
+      "EVAL-V6-005",
+      "EVAL-V6-009"
+    ],
+    "holdout-2": [
+      "EVAL-V6-002",
+      "EVAL-V6-006",
+      "EVAL-V6-010"
+    ],
+    "holdout-3": [
+      "EVAL-V6-003",
+      "EVAL-V6-007",
+      "EVAL-V6-011"
+    ],
+    "holdout-4": [
+      "EVAL-V6-004",
+      "EVAL-V6-008",
+      "EVAL-V6-012"
+    ]
+  }
+}
