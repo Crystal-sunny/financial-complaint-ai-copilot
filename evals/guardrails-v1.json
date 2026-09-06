@@ -339,6 +339,20 @@
       "tool": "get_early_repayment_requests",
       "args": { "customerId": "CUST-1002", "loanId": "LOAN-3001" },
       "expected": { "status": "NOT_FOUND" }
+    },
+    {
+      "id": "G30",
+      "category": "evidence_relationship",
+      "name": "孤立冲正记录不能替代第二笔成功交易",
+      "kind": "validation",
+      "baseCaseId": "CMP-2026-09002",
+      "patches": [
+        {
+          "path": ["recommendation", "evidenceIds"],
+          "value": ["E-102", "E-103"]
+        }
+      ],
+      "expectedError": "DUPLICATE_EVIDENCE_BINDING"
     }
   ]
 }

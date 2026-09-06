@@ -36,11 +36,16 @@ async function loadSuite(suite) {
     ),
   };
 }
-const suites = await Promise.all(['v2', 'v3'].map(loadSuite));
+const suites = await Promise.all(['v2', 'v3', 'v4'].map(loadSuite));
 for (const { text, dataset, lock } of suites) {
   assert.equal(dataset.cases.length, 12);
   assert.equal(new Set(dataset.cases.map((item) => item.id)).size, 12);
-  assert.equal(dataset.status, 'AUTHORIZED_FOR_AUTOMATIC_GLM_EVALUATION');
+  assert.ok(
+    [
+      'AUTHORIZED_FOR_AUTOMATIC_GLM_EVALUATION',
+      'FROZEN_FOR_GLM_EVALUATION',
+    ].includes(dataset.status),
+  );
   assert.equal(dataset.version, lock.version);
   assert.equal(
     createHash('sha256').update(text).digest('hex'),
@@ -51,9 +56,13 @@ for (const { text, dataset, lock } of suites) {
     dataset.cases.map((item) => item.id).sort(),
   );
 }
-const [{ text, dataset }, { text: holdoutText, dataset: holdout }] = suites;
+const [
+  { text, dataset },
+  { text: holdoutText, dataset: holdout },
+  { text: v4Text, dataset: v4 },
+] = suites;
 const original = JSON.stringify(mockDatabase);
-for (const sample of [...dataset.cases, ...holdout.cases]) {
+for (const sample of [...dataset.cases, ...holdout.cases, ...v4.cases]) {
   const prepared = prepareCandidate(sample);
   assert.deepEqual(Object.keys(prepared.case).sort(), [
     'caseId',
@@ -70,21 +79,27 @@ for (const sample of [...dataset.cases, ...holdout.cases]) {
       sample.expected.reviewChecks.length,
   );
   assert.equal(Object.hasOwn(prepared, 'expected'), false);
-  assert.doesNotThrow(() =>
-    assertInvestigationProviderAllowed('glm', prepared.case.caseId),
-  );
+  if (sample.id.startsWith('EVAL-V4-'))
+    assert.throws(
+      () => assertInvestigationProviderAllowed('glm', prepared.case.caseId),
+      { code: 'CASE_DATA_TRANSMISSION_PAUSED' },
+    );
+  else
+    assert.doesNotThrow(() =>
+      assertInvestigationProviderAllowed('glm', prepared.case.caseId),
+    );
   const again = prepareCandidate(sample);
   assert.deepEqual(prepared, again);
   prepared.database.transactions.length = 0;
   assert.ok(again.database.transactions.length > 0);
 }
-assert.throws(() => assertInvestigationProviderAllowed('glm', 'EVAL-V4-001'), {
+assert.throws(() => assertInvestigationProviderAllowed('glm', 'EVAL-V5-001'), {
   code: 'CASE_DATA_TRANSMISSION_PAUSED',
 });
 assert.equal(JSON.stringify(mockDatabase), original);
 let passed = 1;
 console.log(
-  'PASS 24 candidate fixtures are isolated, expectation-free model inputs and authorized only for GLM evaluation',
+  'PASS 36 candidate fixtures are isolated and expectation-free; V4 remains blocked from transmission',
 );
 function test(name, fn) {
   fn();
@@ -208,6 +223,32 @@ test('V3 holdout materializes boundary amounts and preserves customer-loan isola
     'NOT_FOUND',
   );
 });
+test('V4 post-fix set materializes orphan reversal and final-success variants', () => {
+  const orphan = prepareCandidate(
+    v4.cases.find((item) => item.id === 'EVAL-V4-001'),
+  );
+  assert.equal(
+    orphan.database.transactions.find(
+      (item) => item.transactionId === 'TXN-8201',
+    ).status,
+    'FAILED',
+  );
+  assert.equal(
+    orphan.database.transactions.find(
+      (item) => item.transactionId === 'REV-8201',
+    ).status,
+    'PROCESSING',
+  );
+  const finalSuccess = prepareCandidate(
+    v4.cases.find((item) => item.id === 'EVAL-V4-008'),
+  );
+  assert.equal(
+    finalSuccess.database.transactions.find(
+      (item) => item.transactionId === 'TXN-8159',
+    ).status,
+    'SUCCESS_AFTER_TIMEOUT',
+  );
+});
 const stable = await investigateCase('CMP-2026-09002');
 test('stable waiting-for-reversal workflow is approval-ready without claiming completion', () => {
   assert.equal(stable.recommendation.state, 'PENDING_APPROVAL');
@@ -219,10 +260,11 @@ assert.equal(requests, 0);
 console.log(
   JSON.stringify({
     checks: passed,
-    candidateCount: 24,
+    candidateCount: 36,
     candidateSha256: {
       v2: createHash('sha256').update(text).digest('hex'),
       v3: createHash('sha256').update(holdoutText).digest('hex'),
+      v4: createHash('sha256').update(v4Text).digest('hex'),
     },
     modelEvaluation: 'NOT_RUN',
     networkAttempts: requests,

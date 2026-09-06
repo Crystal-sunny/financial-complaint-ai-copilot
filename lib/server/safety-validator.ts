@@ -9,6 +9,17 @@ export type InvestigationPayload = Omit<
 type ValidationContext = {
   validSourceRecordIds: Set<string>;
   validRuleIds: Set<string>;
+  currentCustomerId: string;
+  currentLoanId: string | null;
+  transactionRecords: Array<{
+    transactionId: string;
+    customerId: string;
+    loanId: string | null;
+    relatedScheduleId: string | null;
+    type: string;
+    amount: number;
+    status: string;
+  }>;
 };
 
 export class InvestigationValidationError extends Error {
@@ -130,10 +141,59 @@ export function validateInvestigation(
   );
   checks.push(pass('FINANCIAL_ACTION_GATE', '资金建议通过证据门控制'));
 
+  const recommendationSources = new Set(
+    result.evidence
+      .filter((item) =>
+        result.recommendation.evidenceIds.includes(item.evidenceId),
+      )
+      .map((item) => item.sourceRecordId),
+  );
+  const citedSuccessfulPayments = context.transactionRecords.filter(
+    (item) =>
+      recommendationSources.has(item.transactionId) &&
+      item.customerId === context.currentCustomerId &&
+      item.loanId === context.currentLoanId &&
+      ['MANUAL_REPAYMENT', 'MANUAL_REPAYMENT_RETRY'].includes(item.type) &&
+      ['SUCCESS', 'SUCCESS_AFTER_TIMEOUT'].includes(item.status) &&
+      item.relatedScheduleId !== null &&
+      item.amount > 0,
+  );
+  const citedProcessingReversals = context.transactionRecords.filter(
+    (item) =>
+      recommendationSources.has(item.transactionId) &&
+      item.customerId === context.currentCustomerId &&
+      item.loanId === context.currentLoanId &&
+      item.type === 'AUTOMATIC_REVERSAL' &&
+      item.status === 'PROCESSING' &&
+      item.relatedScheduleId !== null &&
+      item.amount > 0,
+  );
+  const duplicateEvidenceBound = citedProcessingReversals.some((reversal) => {
+    const matchingPayments = citedSuccessfulPayments.filter(
+      (payment) =>
+        payment.customerId === reversal.customerId &&
+        payment.loanId === reversal.loanId &&
+        payment.relatedScheduleId === reversal.relatedScheduleId &&
+        payment.amount === reversal.amount,
+    );
+    return (
+      new Set(matchingPayments.map((item) => item.transactionId)).size >= 2
+    );
+  });
+  assertCondition(
+    result.recommendation.actionCode !== 'WAIT_FOR_REVERSAL' ||
+      duplicateEvidenceBound,
+    'DUPLICATE_EVIDENCE_BINDING',
+    '等待冲正缺少两笔同客户同应收成功交易与匹配在途冲正证据',
+  );
+  checks.push(
+    pass('DUPLICATE_EVIDENCE_BINDING', '重复扣款事实与在途冲正证据绑定有效'),
+  );
+
   const actionRuleRequirements = {
     PROPOSE_REFUND: ['RULE-PAY-004', 'RULE-APPROVAL-002'],
     WAIT_FOR_REVERSAL: ['RULE-PAY-005'],
-    ESCALATE_SECURITY: ['RULE-SECURITY-001', 'RULE-SECURITY-002'],
+    ESCALATE_SECURITY: ['RULE-SECURITY-001'],
   } as const;
   const requiredActionRules =
     actionRuleRequirements[

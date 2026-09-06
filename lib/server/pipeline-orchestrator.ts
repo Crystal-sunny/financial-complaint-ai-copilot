@@ -86,7 +86,7 @@ const requiredToolsByType: Record<string, ToolName[]> = {
 
 function deterministicSafetyResult(caseItem: InvestigationCase) {
   const securityLanguage =
-    /非本人|不是我|陌生消费|新设备|异地登录|登录不上|盗刷|账户.*接管|我.*没有.*(?:进行|操作|消费)|没让.*(?:别人|他人).*(?:操作|进行)|从未.*(?:操作|授权)/.test(
+    /非本人|不是我|陌生消费|新设备|异地登录|登录不上|盗刷|账户.*接管|我.*没有.*(?:进行|操作|消费)|没(?:有)?[^，。]{0,20}(?:点过|付过|买过|操作过|授权过|消费过)|没让.*(?:别人|他人).*(?:操作|进行)|从未.*(?:操作|授权)/.test(
       caseItem.rawText,
     );
   const mandatoryEscalation = securityLanguage;
@@ -174,6 +174,7 @@ function collectRecordIds(value: unknown, ids = new Set<string>()) {
 }
 
 function validContext(
+  caseItem: InvestigationCase,
   toolRuns?: ToolRun[],
   database: typeof mockDatabase = mockDatabase,
 ) {
@@ -193,7 +194,22 @@ function validContext(
           : true,
       ),
   );
-  return { validSourceRecordIds: sourceIds, validRuleIds: ruleIds };
+  const transactionRecords = toolRuns
+    ? toolRuns.flatMap((run) =>
+        run.name === 'get_payment_transactions' &&
+        run.response.status === 'OK' &&
+        Array.isArray(run.response.data)
+          ? run.response.data
+          : [],
+      )
+    : database.transactions;
+  return {
+    validSourceRecordIds: sourceIds,
+    validRuleIds: ruleIds,
+    currentCustomerId: caseItem.customerId,
+    currentLoanId: caseItem.loanId,
+    transactionRecords,
+  };
 }
 
 function toneForEvidence(item: InvestigatorOutput['evidence'][number]) {
@@ -248,7 +264,7 @@ function amountFromEvidence(
             ? item.type === 'AUTOMATIC_REVERSAL' && item.status === 'PROCESSING'
             : ['SCHEDULED_DEBIT', 'MANUAL_REPAYMENT_RETRY'].includes(
                 item.type,
-              ) && item.status === 'SUCCESS'),
+              ) && ['SUCCESS', 'SUCCESS_AFTER_TIMEOUT'].includes(item.status)),
       )
       .map((item) => item.amount),
   );
@@ -257,12 +273,13 @@ function amountFromEvidence(
 }
 
 function assertModelReferences(
+  caseItem: InvestigationCase,
   investigator: InvestigatorOutput,
   disposition: DispositionOutput,
   toolRuns: ToolRun[],
   database: typeof mockDatabase = mockDatabase,
 ) {
-  const context = validContext(toolRuns, database);
+  const context = validContext(caseItem, toolRuns, database);
   const evidenceIds = new Set(
     investigator.evidence.map((item) => item.evidenceId),
   );
@@ -481,10 +498,10 @@ async function investigateWithModel(
           ? paymentRecordSemantics
           : undefined,
         allowedSourceRecordIds: Array.from(
-          validContext(toolRuns, database).validSourceRecordIds,
+          validContext(caseItem, toolRuns, database).validSourceRecordIds,
         ),
         allowedRuleIds: Array.from(
-          validContext(toolRuns, database).validRuleIds,
+          validContext(caseItem, toolRuns, database).validRuleIds,
         ),
       },
       schemaName: 'fact_rule_investigator_output',
@@ -517,6 +534,7 @@ async function investigateWithModel(
   assertDispositionOutput(dispositionCall.output);
   calls.push(dispositionCall.metadata);
   assertModelReferences(
+    caseItem,
     investigatorCall.output,
     dispositionCall.output,
     toolRuns,
@@ -563,7 +581,7 @@ function withExecution(
 ): InvestigationResult {
   const validationChecks = validateInvestigation(
     result,
-    validContext(options.toolRuns, options.database),
+    validContext(options.caseItem, options.toolRuns, options.database),
   );
   return {
     ...result,

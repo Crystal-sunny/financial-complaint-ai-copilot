@@ -94,10 +94,17 @@ function outputs(caseItem) {
   if (caseItem.expectedType === 'duplicate_debit') {
     investigator.evidence.push({
       ...investigator.evidence[0],
+      evidenceId: 'E-DUPLICATE',
+      evidenceType: 'PAYMENT_TRANSACTION',
+      sourceRecordId: 'TXN-8201',
+    });
+    investigator.evidence.push({
+      ...investigator.evidence[0],
       evidenceId: 'E-REVERSAL',
       evidenceType: 'REVERSAL_TRANSACTION',
       sourceRecordId: 'REV-8201',
     });
+    disposition.recommendation.evidenceIds.push('E-DUPLICATE');
     disposition.recommendation.evidenceIds.push('E-REVERSAL');
     disposition.approvalRequirement.level = 'CASE_SPECIALIST';
   }
@@ -190,6 +197,24 @@ await test('non-template transaction denial triggers deterministic security esca
   assert.equal(result.evidenceGate, 'MANDATORY_ESCALATION');
   assert.equal(result.recommendation.actionCode, 'ESCALATE_SECURITY');
 });
+await test('colloquial payment denial also triggers deterministic security escalation', async () => {
+  const base = mockDatabase.cases[2];
+  const caseItem = {
+    ...base,
+    caseId: 'EVAL-V3-010',
+    rawText: '半夜这些付款我一笔都没点过，手机也一直在我这里。',
+    customerRequests: ['核验交易并保护账户。'],
+  };
+  const calls = stub(base);
+  const result = await investigateSyntheticCaseForEvaluation(
+    caseItem,
+    structuredClone(mockDatabase),
+  );
+  assert.equal(calls(), 3);
+  assert.equal(result.coordinator.mandatoryEscalation, true);
+  assert.equal(result.evidenceGate, 'MANDATORY_ESCALATION');
+  assert.equal(result.recommendation.actionCode, 'ESCALATE_SECURITY');
+});
 await test('insufficient evidence without a conflict remains visibly unresolved', async () => {
   stub(mockDatabase.cases[0], (value, index) => {
     if (index === 1) {
@@ -210,6 +235,35 @@ await test('insufficient evidence without a conflict remains visibly unresolved'
   assert.equal(result.execution.actualProvider, 'glm');
   assert.equal(result.conflict.status, 'UNRESOLVED');
   assert.equal(result.conflict.title, '调查结论仍需补充核验');
+});
+await test('orphan reversal cannot authorize waiting without two cited successful payments', async () => {
+  const database = structuredClone(mockDatabase);
+  database.transactions.find(
+    (item) => item.transactionId === 'TXN-8201',
+  ).customerId = 'CUST-1001';
+  stub(mockDatabase.cases[1], (value, index) => {
+    if (index === 1)
+      value.evidence = value.evidence.filter(
+        (item) => item.sourceRecordId !== 'TXN-8201',
+      );
+    if (index === 2)
+      value.recommendation.evidenceIds =
+        value.recommendation.evidenceIds.filter(
+          (item) => item !== 'E-DUPLICATE',
+        );
+    return value;
+  });
+  await assert.rejects(
+    () =>
+      investigateSyntheticCaseForEvaluation(
+        {
+          ...mockDatabase.cases[1],
+          caseId: 'EVAL-V3-011',
+        },
+        database,
+      ),
+    { code: 'DUPLICATE_EVIDENCE_BINDING' },
+  );
 });
 for (const caseItem of mockDatabase.cases) {
   await test(`${caseItem.caseId} GLM path preserves stage order, tokens and scoped inputs`, async () => {

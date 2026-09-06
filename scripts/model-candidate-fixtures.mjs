@@ -12,7 +12,7 @@ const identityFields = {
 
 // Offline preparation only. Does not call the investigation pipeline or provider.
 export function prepareCandidate(sample) {
-  assert.match(sample.id, /^EVAL-V(?:2|3)-\d{3}$/);
+  assert.match(sample.id, /^EVAL-V(?:2|3|4)-\d{3}$/);
   const database = structuredClone(mockDatabase);
   const base = database.cases.find((item) => item.caseId === sample.baseCaseId);
   assert.ok(base, 'Unknown base case');

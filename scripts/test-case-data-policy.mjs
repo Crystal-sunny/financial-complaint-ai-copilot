@@ -105,7 +105,7 @@ for (const caseItem of cases) {
     assert.equal(result.execution.actualProvider, 'recorded');
     assert.equal(result.execution.fallbackUsed, false);
     assert.equal(result.execution.model, null);
-    assert.equal(result.execution.validationChecks.length, 9);
+    assert.equal(result.execution.validationChecks.length, 10);
     assert.ok(
       result.execution.validationChecks.every(
         (item) => item.status === 'PASSED',

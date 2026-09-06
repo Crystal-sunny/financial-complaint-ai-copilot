@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 
 const suite = process.argv[2] ?? 'v3';
-assert.match(suite, /^v[23]$/);
+assert.match(suite, /^v[234]$/);
 const appEvalDirectory = new URL('../evals/', import.meta.url);
 const reportDirectory = new URL('../../evals/results/', import.meta.url);
 const reviewDirectory = new URL('../../evals/reviews/', import.meta.url);

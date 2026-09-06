@@ -8,7 +8,7 @@ const { investigateSyntheticCaseForEvaluation } =
   await import('../lib/server/pipeline-orchestrator.ts');
 
 const [firstArgument, secondArgument] = process.argv.slice(2);
-const suite = /^v[23]$/.test(firstArgument ?? '') ? firstArgument : 'v2';
+const suite = /^v[234]$/.test(firstArgument ?? '') ? firstArgument : 'v2';
 const batchName = suite === firstArgument ? secondArgument : firstArgument;
 assert.ok(batchName, 'Provide a frozen batch name such as batch-1');
 const datasetBaseName = `model-candidates-${suite}`;
@@ -23,7 +23,12 @@ const lock = JSON.parse(
     'utf8',
   ),
 );
-assert.equal(dataset.status, 'AUTHORIZED_FOR_AUTOMATIC_GLM_EVALUATION');
+assert.ok(
+  [
+    'AUTHORIZED_FOR_AUTOMATIC_GLM_EVALUATION',
+    'FROZEN_FOR_GLM_EVALUATION',
+  ].includes(dataset.status),
+);
 assert.equal(dataset.version, lock.version);
 assert.equal(
   createHash('sha256').update(datasetText).digest('hex'),
@@ -35,14 +40,22 @@ const selectedIds =
 assert.ok(selectedIds, `Unknown frozen batch: ${batchName}`);
 assert.ok(selectedIds.length >= 1 && selectedIds.length <= 3);
 const evaluationKind = Object.hasOwn(lock.batches, batchName)
-  ? suite === 'v3'
+  ? ['v3', 'v4'].includes(suite)
     ? 'FROZEN_HOLDOUT'
     : 'FROZEN_BASELINE'
   : 'DEVELOPMENT_REGRESSION';
 const implementationFiles = [
   '../lib/server/agent-prompts.ts',
-  '../lib/server/safety-validator.ts',
+  '../lib/server/case-data-policy.ts',
+  '../lib/server/mock-tools.ts',
+  '../lib/server/model-contracts.ts',
+  '../lib/server/model-provider.ts',
   '../lib/server/pipeline-orchestrator.ts',
+  '../lib/server/safety-validator.ts',
+  '../lib/server/schema-projection.ts',
+  '../lib/server/schema-validator.ts',
+  '../lib/server/tool-semantics.ts',
+  './model-candidate-fixtures.mjs',
 ];
 const implementationSha256 = createHash('sha256')
   .update(
@@ -210,6 +223,9 @@ const report = {
   datasetVersion: dataset.version,
   datasetSha256: lock.datasetSha256,
   implementationSha256,
+  implementationSha256Scope: implementationFiles.map((path) =>
+    path.replace(/^\.\.\//, ''),
+  ),
   startedAt: startedAt.toISOString(),
   completedAt: new Date().toISOString(),
   provider: 'glm',

@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 
-const suite = 'v3';
+const suite = process.argv[2] ?? 'v3';
+assert.match(suite, /^v[34]$/);
 const appEvalDirectory = new URL('../evals/', import.meta.url);
 const reportDirectory = new URL('../../evals/results/', import.meta.url);
 const datasetText = await readFile(
@@ -60,7 +61,7 @@ const outcomes = runs.map((run) => ({
 const completed = outcomes.filter((item) => item.status === 'COMPLETED').length;
 const machinePassed = outcomes.filter((item) => item.machinePassed).length;
 const scorecard = {
-  version: 'model-candidates-v3-holdout-scorecard-1',
+  version: `model-candidates-${suite}-holdout-scorecard-1`,
   generatedAt: new Date().toISOString(),
   datasetVersion: dataset.version,
   datasetSha256: manifest.datasetSha256,
@@ -69,7 +70,7 @@ const scorecard = {
   implementationSha256: [
     ...new Set(reports.map((entry) => entry.report.implementationSha256)),
   ],
-  implementationSha256Scope: [
+  implementationSha256Scope: reports[0].report.implementationSha256Scope ?? [
     'lib/server/agent-prompts.ts',
     'lib/server/safety-validator.ts',
     'lib/server/pipeline-orchestrator.ts',
@@ -97,7 +98,7 @@ const scorecard = {
 
 const percent = (scorecard.summary.machinePassRate * 100).toFixed(1);
 const completionPercent = (scorecard.summary.completionRate * 100).toFixed(1);
-const markdown = `# GLM V3 冻结留出集计分卡
+const markdown = `# GLM ${suite.toUpperCase()} 冻结留出集计分卡
 
 - 数据集：${scorecard.datasetVersion}
 - 模型：${scorecard.model}
@@ -120,12 +121,12 @@ ${outcomes
 `;
 
 await writeFile(
-  new URL('model-candidates-v3-scorecard.json', reportDirectory),
+  new URL(`model-candidates-${suite}-scorecard.json`, reportDirectory),
   `${JSON.stringify(scorecard, null, 2)}\n`,
   'utf8',
 );
 await writeFile(
-  new URL('model-candidates-v3-scorecard.md', reportDirectory),
+  new URL(`model-candidates-${suite}-scorecard.md`, reportDirectory),
   markdown,
   'utf8',
 );

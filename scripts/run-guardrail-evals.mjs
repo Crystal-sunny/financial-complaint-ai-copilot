@@ -33,7 +33,7 @@ assert.equal(
   dataset.scope,
   'offline-application-regression-not-model-accuracy',
 );
-assert.equal(dataset.cases.length, 29);
+assert.equal(dataset.cases.length, 30);
 assert.equal(
   new Set(dataset.cases.map((item) => item.id)).size,
   dataset.cases.length,
@@ -85,12 +85,19 @@ function recordId(record) {
 }
 function evaluate(sample) {
   if (sample.kind === 'validation') {
-    const result = structuredClone(investigateRecordedCase('CMP-2026-09001'));
+    const caseItem = mockDatabase.cases.find(
+      (item) => item.caseId === (sample.baseCaseId ?? 'CMP-2026-09001'),
+    );
+    assert.ok(caseItem, 'Unknown validation base case');
+    const result = structuredClone(investigateRecordedCase(caseItem.caseId));
     const context = {
       validSourceRecordIds: new Set(
         result.evidence.map((item) => item.sourceRecordId),
       ),
       validRuleIds: new Set(result.recommendation.ruleIds),
+      currentCustomerId: caseItem.customerId,
+      currentLoanId: caseItem.loanId,
+      transactionRecords: mockDatabase.transactions,
     };
     // Positive control: a broken or deny-all validator must fail this suite.
     validateInvestigation(result, context);
@@ -197,6 +204,9 @@ for (const item of mockDatabase.cases) {
       result.evidence.map((evidence) => evidence.sourceRecordId),
     ),
     validRuleIds: new Set(result.recommendation.ruleIds),
+    currentCustomerId: item.customerId,
+    currentLoanId: item.loanId,
+    transactionRecords: mockDatabase.transactions,
   });
 }
 const results = dataset.cases.map((sample) => {
