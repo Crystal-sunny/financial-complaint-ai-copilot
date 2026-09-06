@@ -4,11 +4,35 @@ export class SchemaValidationError extends Error {
   constructor(
     readonly fieldPath: string,
     readonly issue: string,
+    readonly fieldHint?: string,
   ) {
     super('模型输出不符合结构化契约');
     this.name = 'SchemaValidationError';
   }
 }
+
+// Only these static, generic names may identify an unexpected field. Unknown
+// keys can themselves contain private data, so never echo arbitrary model keys.
+const diagnosticFieldNames = new Set([
+  'title',
+  'tone',
+  'confidence',
+  'source',
+  'evidenceIds',
+  'status',
+  'ruleId',
+  'version',
+  'effectiveFrom',
+  'clause',
+  'applicability',
+  'description',
+  'event',
+  'verificationStatus',
+  'reason',
+  'rawText',
+  'sourceRecordId',
+  'observedAt',
+]);
 
 export function assertSchema(
   value: unknown,
@@ -34,7 +58,12 @@ export function assertSchema(
     }
     for (const [key, item] of Object.entries(object)) {
       if (!Object.hasOwn(properties, key)) {
-        if (schema.additionalProperties === false) fail('EXTRA_FIELD');
+        if (schema.additionalProperties === false)
+          throw new SchemaValidationError(
+            path,
+            'EXTRA_FIELD',
+            diagnosticFieldNames.has(key) ? key : 'UNRECOGNIZED',
+          );
       } else assertSchema(item, properties[key], `${path}.${key}`);
     }
   } else if (schema.type === 'array') {

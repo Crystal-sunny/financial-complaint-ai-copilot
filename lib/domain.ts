@@ -101,6 +101,7 @@ export type AgentRunTrace = {
     input: Record<string, unknown>;
     output: Record<string, unknown>;
     responseId: string | null;
+    omittedFieldCount: number | null;
   };
 };
 

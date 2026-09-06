@@ -1332,6 +1332,17 @@ export function CaseWorkbench() {
                                                 out {trace.metrics.outputTokens}
                                               </p>
                                             )}
+                                            {(trace.technicalDetails
+                                              .omittedFieldCount ?? 0) > 0 && (
+                                              <p className="mt-1 text-[8px] text-amber-200">
+                                                白名单过滤了{' '}
+                                                {
+                                                  trace.technicalDetails
+                                                    .omittedFieldCount
+                                                }{' '}
+                                                个额外字段；保留字段已通过严格校验。
+                                              </p>
+                                            )}
                                             <p className="mt-2 text-[8px] font-semibold text-sky-300">
                                               INPUT
                                             </p>

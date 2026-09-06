@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 const { GLMModelProvider, getRuntimeCapabilities } =
   await import('../lib/server/model-provider.ts');
 const { assertSchema } = await import('../lib/server/schema-validator.ts');
+const { projectSchemaFields } =
+  await import('../lib/server/schema-projection.ts');
 const { coordinatorSchema, investigatorSchema, dispositionSchema } =
   await import('../lib/server/model-contracts.ts');
 
@@ -99,6 +101,20 @@ await test('tuple order and approval constants are enforced', () => {
   value.approvalRequirement.required = false;
   assert.throws(() => assertSchema(value, dispositionSchema));
 });
+await test('extra-field diagnostics expose only allowlisted names, never values', () => {
+  assert.throws(
+    () => assertSchema({ ok: true, title: 'PRIVATE_VALUE' }, schema),
+    (error) =>
+      error.fieldHint === 'title' &&
+      !JSON.stringify(error).includes('PRIVATE_VALUE'),
+  );
+  assert.throws(
+    () => assertSchema({ ok: true, PRIVATE_KEY: 'PRIVATE_VALUE' }, schema),
+    (error) =>
+      error.fieldHint === 'UNRECOGNIZED' &&
+      !JSON.stringify(error).includes('PRIVATE'),
+  );
+});
 await test('request uses official endpoint and JSON mode; metadata excludes reasoning', async () => {
   globalThis.fetch = async (url, options) => {
     assert.equal(url, 'https://open.bigmodel.cn/api/paas/v4/chat/completions');
@@ -125,6 +141,69 @@ await test('missing token usage remains null rather than fabricated zero', async
   assert.equal(result.metadata.outputTokens, null);
   assert.equal(result.metadata.responseId, null);
 });
+await test('JSON adapter omits extra private fields without returning their names or values', async () => {
+  stub(
+    success({
+      choices: [
+        {
+          finish_reason: 'stop',
+          message: {
+            content: '{"ok":true,"PRIVATE_KEY":"PRIVATE_VALUE"}',
+          },
+        },
+      ],
+    }),
+  );
+  const result = await provider.generateStructured(request);
+  assert.deepEqual(result.output, { ok: true });
+  assert.equal(result.metadata.omittedFieldCount, 1);
+  assert.ok(!JSON.stringify(result).includes('PRIVATE'));
+});
+await test('nested projection preserves every declared value and the original input', () => {
+  const expected = fixture(investigatorSchema);
+  const original = structuredClone(expected);
+  original.evidence[0].PRIVATE_KEY = { data: 'PRIVATE_VALUE' };
+  original.conflicts[0].title = 'PRIVATE_VALUE';
+  original.EXTRA_ROOT = true;
+  const projected = projectSchemaFields(original, investigatorSchema);
+  assert.deepEqual(projected.output, expected);
+  assert.equal(projected.omittedFieldCount, 3);
+  assert.equal(original.evidence[0].PRIVATE_KEY.data, 'PRIVATE_VALUE');
+  assertSchema(projected.output, investigatorSchema);
+});
+await test('projection never repairs missing required fields, types, enums or approval constants', () => {
+  const mutations = [
+    (value) => {
+      delete value.recommendation.actionCode;
+    },
+    (value) => {
+      value.recommendation.actionCode = 'EXECUTE_REFUND';
+    },
+    (value) => {
+      value.recommendation.evidenceIds = 'E-TEST';
+    },
+    (value) => {
+      value.approvalRequirement.required = false;
+    },
+    (value) => {
+      value.responseConstraints.requiredApprovalFields.reverse();
+    },
+    (value) => {
+      value.responseConstraints.requiredApprovalFields.push('EXTRA');
+    },
+  ];
+  for (const mutate of mutations) {
+    const value = fixture(dispositionSchema);
+    value.EXTRA_ROOT = 'ignored';
+    mutate(value);
+    assert.throws(() =>
+      assertSchema(
+        projectSchemaFields(value, dispositionSchema).output,
+        dispositionSchema,
+      ),
+    );
+  }
+});
 for (const [name, payload] of [
   [
     'truncated JSON',
@@ -141,12 +220,12 @@ for (const [name, payload] of [
     }),
   ],
   [
-    'extra private field',
+    'missing required field even with extra private field',
     success({
       choices: [
         {
           finish_reason: 'stop',
-          message: { content: '{"ok":true,"secret":"PRIVATE"}' },
+          message: { content: '{"secret":"PRIVATE"}' },
         },
       ],
     }),

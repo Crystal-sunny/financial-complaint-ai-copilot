@@ -2,6 +2,7 @@
 import './test-loader.mjs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { assessLiveResult } from './live-result-checks.mjs';
 if (!process.argv.includes('--approved-three-cases')) {
   throw new Error(
     'Live verification requires explicit authorization for the three cases.',
@@ -36,6 +37,11 @@ for (const caseId of selectedId ? [selectedId] : caseIds) {
     toolCalls: result.toolTraces.length,
     gate: result.evidenceGate,
     actionCode: result.recommendation.actionCode,
+    amount: result.recommendation.amount,
+    ...assessLiveResult(result),
+    // Only validated application output, never raw failed supplier responses.
+    conflict: result.conflict,
+    rationale: result.recommendation.rationale,
     approval: result.approval.level,
     validationChecks: result.execution.validationChecks,
     agents: result.agentRuns.map((agent) => ({
@@ -45,6 +51,7 @@ for (const caseId of selectedId ? [selectedId] : caseIds) {
       responseId: agent.technicalDetails.responseId,
       inputTokens: agent.metrics.inputTokens,
       outputTokens: agent.metrics.outputTokens,
+      omittedFieldCount: agent.technicalDetails.omittedFieldCount,
     })),
   };
   results.push(summary);
@@ -70,5 +77,4 @@ await writeFile(
   ),
 );
 console.log(`REPORT ${reportPath}`);
-if (results.some((result) => result.actualProvider !== 'glm'))
-  process.exitCode = 1;
+if (results.some((result) => !result.businessPassed)) process.exitCode = 1;

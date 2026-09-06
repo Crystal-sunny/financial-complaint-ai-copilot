@@ -36,6 +36,7 @@ import {
   type ToolResponse,
 } from './mock-tools';
 import { investigateRecordedCase } from './recorded-orchestrator';
+import { paymentRecordSemantics } from './tool-semantics';
 import {
   InvestigationValidationError,
   validateInvestigation,
@@ -448,6 +449,11 @@ async function investigateWithModel(
         coordinator: coordinatorCall.output,
         deterministicSafetyResult: safety,
         toolResults: toolRuns,
+        recordSemantics: toolRuns.some(
+          (run) => run.name === 'get_payment_transactions',
+        )
+          ? paymentRecordSemantics
+          : undefined,
         allowedSourceRecordIds: Array.from(
           validContext(toolRuns).validSourceRecordIds,
         ),

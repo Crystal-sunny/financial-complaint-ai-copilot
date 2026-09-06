@@ -1,6 +1,7 @@
 // Offline GLM-path integration: replace all model fetches with contract fixtures.
 import './test-loader.mjs';
 import assert from 'node:assert/strict';
+import { assessLiveResult } from './live-result-checks.mjs';
 process.env.GLM_API_KEY = 'offline-only-key';
 process.env.GLM_MODEL = 'glm-5.3-flash';
 process.env.GLM_BASE_URL = 'https://open.bigmodel.cn/api/paas/v4';
@@ -86,6 +87,16 @@ function outputs(caseItem) {
     caseItem.expectedType === 'suspected_fraud'
       ? 'MANDATORY_ESCALATION'
       : 'PENDING_APPROVAL';
+  if (caseItem.expectedType === 'duplicate_debit') {
+    investigator.evidence.push({
+      ...investigator.evidence[0],
+      evidenceId: 'E-REVERSAL',
+      evidenceType: 'REVERSAL_TRANSACTION',
+      sourceRecordId: 'REV-8201',
+    });
+    disposition.recommendation.evidenceIds.push('E-REVERSAL');
+    disposition.approvalRequirement.level = 'CASE_SPECIALIST';
+  }
   if (caseItem.expectedType === 'suspected_fraud')
     disposition.approvalRequirement.level = 'SECURITY_TEAM';
   return [coordinator, investigator, disposition];
@@ -102,6 +113,13 @@ function stub(caseItem, mutate = (value) => value) {
         !inputText.includes('expectedRiskLevel'),
     );
     assert.ok(!inputText.includes('offline-only-key'));
+    if (calls === 1) {
+      const input = JSON.parse(inputText);
+      assert.ok(
+        input.recordSemantics.status.SUCCESS_AFTER_TIMEOUT.includes('最终成功'),
+      );
+      assert.ok(input.recordSemantics.relation.includes('不得虚构'));
+    }
     const output = mutate(structuredClone(values[calls]), calls);
     calls++;
     return Response.json({
@@ -176,6 +194,40 @@ await test('refund amount comes from the disputed debit, not earlier settlement'
   });
   assert.equal(result.execution.actualProvider, 'glm');
   assert.equal(result.recommendation.amount, 1248.36);
+});
+await test('extra model fields are omitted and the count is traceable without exposing content', async () => {
+  stub(mockDatabase.cases[0], (value, index) => {
+    if (index === 1) value.evidence[0].PRIVATE_KEY = 'PRIVATE_VALUE';
+    return value;
+  });
+  const result = await investigateCase(mockDatabase.cases[0].caseId, {
+    provider: 'glm',
+  });
+  assert.equal(result.execution.actualProvider, 'glm');
+  assert.equal(result.agentRuns[1].technicalDetails.omittedFieldCount, 1);
+  assert.ok(!JSON.stringify(result).includes('PRIVATE'));
+  assert.equal(result.recommendation.amount, 1248.36);
+});
+await test('missing required evidence field still causes full safe fallback without a disposition call', async () => {
+  const calls = stub(mockDatabase.cases[0], (value, index) => {
+    if (index === 1) {
+      delete value.evidence[0].claim;
+      value.evidence[0].EXTRA = 'PRIVATE_VALUE';
+    }
+    return value;
+  });
+  const result = await investigateCase(mockDatabase.cases[0].caseId, {
+    provider: 'glm',
+  });
+  assert.equal(calls(), 2);
+  assert.equal(result.execution.actualProvider, 'recorded');
+  assert.ok(result.execution.fallbackReason.includes('MISSING_FIELD'));
+  assert.ok(
+    result.agentRuns.every(
+      (agent) => agent.technicalDetails.omittedFieldCount === null,
+    ),
+  );
+  assert.ok(!JSON.stringify(result).includes('PRIVATE'));
 });
 await test('a late-stage invalid reference discards every model trace on fallback', async () => {
   const calls = stub(mockDatabase.cases[0], (value, index) => {
@@ -329,6 +381,27 @@ await test('model evidence conflict cannot enter approval or generate a canned r
     409,
   );
 });
+await test('waiting for reversal uses specialist review and never silently accepts a refund approver', async () => {
+  for (const level of ['CASE_SPECIALIST', 'L1_SUPERVISOR']) {
+    stub(mockDatabase.cases[1], (value, index) => {
+      if (index === 2) value.approvalRequirement.level = level;
+      return value;
+    });
+    const result = await investigateCase(mockDatabase.cases[1].caseId, {
+      provider: 'glm',
+    });
+    assert.equal(result.execution.actualProvider, 'glm');
+    assert.equal(result.recommendation.amount, 588.2);
+    registerApprovalContext(result);
+    const response = await approvalRequest(result.caseId, result.runId);
+    assert.equal(response.status, level === 'CASE_SPECIALIST' ? 200 : 409);
+    if (level !== 'CASE_SPECIALIST')
+      assert.equal(
+        Object.hasOwn(await response.json(), 'responseDraft'),
+        false,
+      );
+  }
+});
 await test('rerunning a case invalidates its previous approval context', async () => {
   const older = await investigateCase(mockDatabase.cases[0].caseId);
   registerApprovalContext(older);
@@ -336,5 +409,28 @@ await test('rerunning a case invalidates its previous approval context', async (
   registerApprovalContext(newer);
   assert.notEqual(newer.runId, older.runId);
   assert.equal((await approvalRequest(older.caseId, older.runId)).status, 409);
+});
+await test('live assessment separates fallback, format success and business success', async () => {
+  const recorded = await investigateCase(mockDatabase.cases[1].caseId);
+  assert.equal(assessLiveResult(recorded).businessPassed, false);
+  assert.ok(
+    assessLiveResult(recorded).businessChecks.every(
+      (check) => check.status === 'NOT_EVALUATED',
+    ),
+  );
+  stub(mockDatabase.cases[1]);
+  const result = await investigateCase(mockDatabase.cases[1].caseId, {
+    provider: 'glm',
+  });
+  assert.equal(assessLiveResult(result).businessPassed, true);
+  result.approval.level = 'L1_SUPERVISOR';
+  const assessment = assessLiveResult(result);
+  assert.equal(assessment.modelContractPassed, true);
+  assert.equal(assessment.businessPassed, false);
+  assert.ok(
+    assessment.businessChecks.some(
+      (check) => check.field === 'approval' && check.status === 'FAILED',
+    ),
+  );
 });
 console.log(`Offline GLM pipeline checks: ${passed}/${passed}`);

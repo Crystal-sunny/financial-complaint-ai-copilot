@@ -152,8 +152,10 @@ for (const caseItem of cases) {
       assert.equal(trace.metrics.inputTokens, null);
       assert.equal(trace.metrics.outputTokens, null);
       assert.equal(trace.technicalDetails.responseId, null);
+      assert.equal(trace.technicalDetails.omittedFieldCount, null);
       assert.deepEqual(Object.keys(trace.technicalDetails).sort(), [
         'input',
+        'omittedFieldCount',
         'output',
         'responseId',
       ]);

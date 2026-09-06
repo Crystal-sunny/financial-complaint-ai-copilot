@@ -62,6 +62,7 @@ function modelMetrics(call: ModelCallMetadata | undefined) {
     outputTokens: call?.outputTokens ?? null,
     responseId: call?.responseId ?? null,
     durationMs: call?.durationMs ?? 0,
+    omittedFieldCount: call?.omittedFieldCount ?? null,
   };
 }
 
@@ -135,6 +136,7 @@ export function buildAgentRunTraces(options: {
           plannedTools: traces.map((trace) => trace.name),
         },
         responseId: coordinatorCall.responseId,
+        omittedFieldCount: coordinatorCall.omittedFieldCount,
       },
     },
     {
@@ -190,6 +192,7 @@ export function buildAgentRunTraces(options: {
           ruleIds,
         },
         responseId: investigatorCall.responseId,
+        omittedFieldCount: investigatorCall.omittedFieldCount,
       },
     },
     {
@@ -238,6 +241,7 @@ export function buildAgentRunTraces(options: {
           responseConstraint: '审批完成且结论明确后才可生成客户回复',
         },
         responseId: dispositionCall.responseId,
+        omittedFieldCount: dispositionCall.omittedFieldCount,
       },
     },
   ];

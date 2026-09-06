@@ -1,6 +1,7 @@
 import type { ProviderMode, RuntimeCapabilities } from '../domain';
 import { getCaseDataTransmissionStatus } from './case-data-policy';
 import { assertSchema, SchemaValidationError } from './schema-validator';
+import { projectSchemaFields } from './schema-projection';
 
 type JsonSchema = Record<string, unknown>;
 
@@ -24,6 +25,7 @@ export type ModelCallMetadata = {
   durationMs: number;
   inputTokens: number | null;
   outputTokens: number | null;
+  omittedFieldCount: number;
 };
 
 export type StructuredGeneration<T> = {
@@ -218,14 +220,20 @@ export class GLMModelProvider implements ModelProvider {
         );
       }
       let output: T;
+      let omittedFieldCount = 0;
       try {
-        output = JSON.parse(choice.message.content) as T;
+        const projected = projectSchemaFields(
+          JSON.parse(choice.message.content),
+          request.schema,
+        );
+        output = projected.output as T;
+        omittedFieldCount = projected.omittedFieldCount;
         assertSchema(output, request.schema);
       } catch (error) {
         throw new ModelProviderError(
           'INVALID_OUTPUT',
           error instanceof SchemaValidationError
-            ? `SCHEMA:${error.issue}:${error.fieldPath}`
+            ? `SCHEMA:${error.issue}:${error.fieldPath}${error.fieldHint ? `:${error.fieldHint}` : ''}`
             : 'JSON_PARSE',
         );
       }
@@ -240,6 +248,7 @@ export class GLMModelProvider implements ModelProvider {
           durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
           inputTokens: tokenCount(payload.usage?.prompt_tokens),
           outputTokens: tokenCount(payload.usage?.completion_tokens),
+          omittedFieldCount,
         },
       };
     } catch (error) {
@@ -339,6 +348,7 @@ export class OpenAIModelProvider implements ModelProvider {
         durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
         inputTokens: payload.usage?.input_tokens ?? 0,
         outputTokens: payload.usage?.output_tokens ?? 0,
+        omittedFieldCount: 0,
       },
     };
   }
