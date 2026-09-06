@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   AlertTriangle,
   ArrowRight,
@@ -44,6 +44,8 @@ import type {
   ApprovalOutcome,
   Evidence,
   InvestigationResult,
+  ProviderMode,
+  RuntimeCapabilities,
 } from '@/lib/domain';
 
 type DecisionState = 'idle' | 'pending' | 'approved' | 'returned' | 'replied';
@@ -127,6 +129,7 @@ const runStages = [
 
 const approvalLabels: Record<string, string> = {
   L1_SUPERVISOR: '一级组长审批',
+  L2_COMPLIANCE: '二级合规审批',
   CASE_SPECIALIST: '案件专员复核',
   SECURITY_TEAM: '账户安全团队',
 };
@@ -160,6 +163,11 @@ function formatEvidenceTime(value: string) {
 }
 
 export function CaseWorkbench() {
+  const [providerMode, setProviderMode] = useState<ProviderMode>('recorded');
+  const [runtime, setRuntime] = useState<RuntimeCapabilities>({
+    defaultProvider: 'recorded',
+    openai: { available: false, model: 'gpt-5.4-mini' },
+  });
   const [selectedId, setSelectedId] = useState(cases[0].id);
   const [resultsByCase, setResultsByCase] = useState<
     Record<string, InvestigationResult>
@@ -231,6 +239,22 @@ export function CaseWorkbench() {
       (item) => item === 'approved' || item === 'replied',
     ).length;
 
+  useEffect(() => {
+    let active = true;
+    fetch('/api/runtime')
+      .then((response) => {
+        if (!response.ok) throw new Error('runtime unavailable');
+        return response.json() as Promise<RuntimeCapabilities>;
+      })
+      .then((capabilities) => {
+        if (active) setRuntime(capabilities);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, []);
+
   function selectCase(caseId: string) {
     setSelectedId(caseId);
     setCopied(false);
@@ -254,6 +278,8 @@ export function CaseWorkbench() {
     try {
       const request = fetch(`/api/cases/${caseId}/investigate`, {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: providerMode }),
       });
       await new Promise((resolve) => setTimeout(resolve, 420));
       setRunStepsByCase((current) => ({ ...current, [caseId]: 1 }));
@@ -883,6 +909,45 @@ export function CaseWorkbench() {
                       三个角色按顺序完成分类、证据核验和合规建议。
                     </p>
 
+                    <div className="mt-3 grid grid-cols-2 gap-1 rounded-lg bg-slate-100 p-1">
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant={
+                          providerMode === 'recorded' ? 'secondary' : 'ghost'
+                        }
+                        onClick={() => setProviderMode('recorded')}
+                        disabled={Boolean(runningCaseId)}
+                        className="h-7 text-[10px]"
+                      >
+                        稳定模式
+                      </Button>
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant={
+                          providerMode === 'openai' ? 'secondary' : 'ghost'
+                        }
+                        onClick={() => setProviderMode('openai')}
+                        disabled={
+                          !runtime.openai.available || Boolean(runningCaseId)
+                        }
+                        title={
+                          runtime.openai.available
+                            ? `使用 ${runtime.openai.model}`
+                            : '模型服务完成安全配置后可用'
+                        }
+                        className="h-7 text-[10px]"
+                      >
+                        模型增强
+                      </Button>
+                    </div>
+                    <p className="mt-1.5 text-[9px] leading-4 text-slate-400">
+                      {runtime.openai.available
+                        ? `可用模型：${runtime.openai.model}`
+                        : '模型增强待安全配置，稳定模式正常可用'}
+                    </p>
+
                     {(isRunning || result) && (
                       <div className="mt-4 space-y-2.5">
                         {runStages.map((stage, index) => {
@@ -923,6 +988,41 @@ export function CaseWorkbench() {
                       </div>
                     )}
 
+                    {result && (
+                      <div
+                        className={`mt-3 rounded-lg border p-2.5 ${
+                          result.execution.fallbackUsed
+                            ? 'border-amber-200 bg-amber-50'
+                            : 'border-emerald-200 bg-emerald-50/70'
+                        }`}
+                      >
+                        <p className="flex items-center gap-1.5 text-[10px] font-semibold text-slate-700">
+                          <ShieldCheck
+                            className={`size-3.5 ${
+                              result.execution.fallbackUsed
+                                ? 'text-amber-700'
+                                : 'text-emerald-700'
+                            }`}
+                          />
+                          {result.execution.actualProvider === 'openai'
+                            ? '模型结果已通过安全校验'
+                            : '稳定结果已通过安全校验'}
+                        </p>
+                        <p className="mt-1 text-[9px] leading-4 text-slate-500">
+                          {result.execution.model
+                            ? `${result.execution.model} · `
+                            : ''}
+                          {result.execution.validationChecks.length}{' '}
+                          项硬性检查通过
+                        </p>
+                        {result.execution.fallbackReason && (
+                          <p className="mt-1 text-[9px] leading-4 text-amber-700">
+                            {result.execution.fallbackReason}
+                          </p>
+                        )}
+                      </div>
+                    )}
+
                     {error && (
                       <div className="mt-3 rounded-lg bg-rose-50 p-2.5 text-[10px] text-rose-700">
                         {error}
@@ -940,7 +1040,9 @@ export function CaseWorkbench() {
                           ? '另一案件调查中…'
                           : result
                             ? '重新运行调查'
-                            : '开始 AI 调查'}
+                            : providerMode === 'openai'
+                              ? '开始模型调查'
+                              : '开始 AI 调查'}
                       {isRunning ? (
                         <LoaderCircle
                           data-icon="inline-end"

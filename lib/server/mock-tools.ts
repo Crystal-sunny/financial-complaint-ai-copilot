@@ -3,10 +3,10 @@ import { mockDatabase } from '@/lib/server/mock-database';
 
 type AgentRole = 'case_coordinator' | 'fact_rule_investigator';
 
-type ToolResponse = {
-  status: 'OK' | 'NOT_FOUND';
+export type ToolResponse = {
+  status: 'OK' | 'NOT_FOUND' | 'ERROR';
   data: unknown;
-  error: null;
+  error: string | null;
 };
 
 const allowedTools: Record<ToolName, AgentRole[]> = {

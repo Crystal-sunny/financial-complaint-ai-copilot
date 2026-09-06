@@ -8,6 +8,7 @@
   "scripts": {
     "dev": "vinext dev",
     "build": "vinext build",
+    "eval": "node scripts/run-evals.mjs",
     "start": "wrangler dev --config dist/server/wrangler.json",
     "lint": "oxlint app components/case-workbench.tsx components/ui/badge.tsx components/ui/button.tsx components/ui/input.tsx components/ui/popover.tsx components/ui/scroll-area.tsx lib",
     "format": "oxfmt"

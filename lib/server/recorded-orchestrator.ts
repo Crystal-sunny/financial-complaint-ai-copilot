@@ -173,17 +173,50 @@ const securityEvidence: Evidence[] = [
   },
   {
     evidenceId: 'E-202',
-    evidenceType: 'PAYMENT_TRANSACTION',
-    sourceSystem: '钱包支付',
-    sourceRecordId: 'TXN-8281—8283',
-    observedAt: '2026-08-28T01:21:02+08:00',
-    title: '八分钟内三笔交易',
-    claim: '陌生设备登录后连续发生三笔交易，共 ¥2,578.00',
-    rawExcerpt: '¥680.00 + ¥1,299.00 + ¥599.00',
+    evidenceType: 'ACCOUNT_SECURITY_EVENT',
+    sourceSystem: '账户安全平台',
+    sourceRecordId: 'SEC-8284',
+    observedAt: '2026-08-28T01:22:00+08:00',
+    title: '短时交易聚集告警',
+    claim: '同一陌生设备触发短时多笔交易告警',
+    rawExcerpt: 'THREE_TRANSACTIONS_IN_EIGHT_MINUTES · AMOUNT_SPIKE',
     tone: 'bad',
   },
   {
     evidenceId: 'E-203',
+    evidenceType: 'PAYMENT_TRANSACTION',
+    sourceSystem: '钱包支付',
+    sourceRecordId: 'TXN-8281',
+    observedAt: '2026-08-28T01:14:03+08:00',
+    title: '第一笔陌生交易',
+    claim: '陌生设备登录后发生 ¥680.00 交易',
+    rawExcerpt: 'MERCHANT_PAYMENT · SUCCESS · ¥680.00',
+    tone: 'bad',
+  },
+  {
+    evidenceId: 'E-204',
+    evidenceType: 'PAYMENT_TRANSACTION',
+    sourceSystem: '钱包支付',
+    sourceRecordId: 'TXN-8282',
+    observedAt: '2026-08-28T01:18:04+08:00',
+    title: '第二笔陌生交易',
+    claim: '四分钟后发生 ¥1,299.00 交易',
+    rawExcerpt: 'MERCHANT_PAYMENT · SUCCESS · ¥1,299.00',
+    tone: 'bad',
+  },
+  {
+    evidenceId: 'E-205',
+    evidenceType: 'PAYMENT_TRANSACTION',
+    sourceSystem: '钱包支付',
+    sourceRecordId: 'TXN-8283',
+    observedAt: '2026-08-28T01:21:02+08:00',
+    title: '第三笔陌生交易',
+    claim: '三分钟后发生 ¥599.00 交易',
+    rawExcerpt: 'MERCHANT_PAYMENT · SUCCESS · ¥599.00',
+    tone: 'bad',
+  },
+  {
+    evidenceId: 'E-206',
     evidenceType: 'CUSTOMER_STATEMENT',
     sourceSystem: '客诉工单',
     sourceRecordId: 'TKT-9003',
@@ -197,7 +230,10 @@ const securityEvidence: Evidence[] = [
 
 function buildDisposition(
   caseItem: MockCase,
-): Omit<InvestigationResult, 'runId' | 'generatedAt' | 'toolTraces'> {
+): Omit<
+  InvestigationResult,
+  'runId' | 'generatedAt' | 'toolTraces' | 'execution'
+> {
   if (caseItem.expectedType === 'early_repayment_debit') {
     return {
       caseId: caseItem.caseId,
@@ -229,6 +265,7 @@ function buildDisposition(
           '扣款发生在贷款结清之后，且对应应收计划已因结清取消；撤销超时是最可能的直接原因。',
         state: 'PENDING_APPROVAL',
         ruleIds: ['RULE-PAY-004', 'RULE-APPROVAL-002', 'RULE-CREDIT-003'],
+        evidenceIds: ['E-002', 'E-004', 'E-005', 'E-006'],
       },
       approval: {
         level: 'L1_SUPERVISOR',
@@ -282,6 +319,7 @@ function buildDisposition(
         rationale: '已有自动冲正在途，当前再次提交人工退款可能造成重复退回。',
         state: 'NEEDS_INFORMATION',
         ruleIds: ['RULE-PAY-005', 'RULE-COMPLAINT-001'],
+        evidenceIds: ['E-101', 'E-102', 'E-103'],
       },
       approval: {
         level: 'CASE_SPECIALIST',
@@ -334,6 +372,7 @@ function buildDisposition(
         '客户否认授权，且同时命中新设备、地点偏离、异常时段和交易聚集风险信号。',
       state: 'MANDATORY_ESCALATION',
       ruleIds: ['RULE-SECURITY-001', 'RULE-SECURITY-002'],
+      evidenceIds: ['E-201', 'E-202', 'E-203', 'E-204', 'E-205', 'E-206'],
     },
     approval: {
       level: 'SECURITY_TEAM',
@@ -361,7 +400,9 @@ function buildDisposition(
   };
 }
 
-export function investigateCase(caseId: string): InvestigationResult | null {
+export function investigateRecordedCase(
+  caseId: string,
+): Omit<InvestigationResult, 'execution'> | null {
   const caseItem = mockDatabase.cases.find((item) => item.caseId === caseId);
   if (!caseItem) return null;
 
