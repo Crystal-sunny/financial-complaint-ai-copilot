@@ -48,7 +48,7 @@ function callArguments(
     case 'search_rules':
       return {
         query: '投诉调查与处置',
-        effectiveAt: '2026-08-31',
+        effectiveAt: caseItem.receivedAt.slice(0, 10),
         businessType: caseItem.expectedType,
       };
   }
@@ -317,7 +317,7 @@ function buildDisposition(
         action: '等待自动冲正完成并由支付专员复核',
         amount: 588.2,
         rationale: '已有自动冲正在途，当前再次提交人工退款可能造成重复退回。',
-        state: 'NEEDS_INFORMATION',
+        state: 'PENDING_APPROVAL',
         ruleIds: ['RULE-PAY-005', 'RULE-COMPLAINT-001'],
         evidenceIds: ['E-101', 'E-102', 'E-103'],
       },

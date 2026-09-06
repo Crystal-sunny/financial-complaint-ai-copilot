@@ -380,6 +380,26 @@ await test('model evidence conflict cannot enter approval or generate a canned r
     (await approvalRequest(result.caseId, result.runId)).status,
     409,
   );
+  stub(mockDatabase.cases[0], (value, index) => {
+    if (index === 1) {
+      const conflict = {
+        description: '记录矛盾',
+        leftEvidenceIds: ['E-TEST'],
+        rightEvidenceIds: ['E-TEST'],
+        resolution: 'RESOLVED',
+        nextAction: '核验',
+      };
+      value.conflicts = [conflict, { ...conflict, resolution: 'UNRESOLVED' }];
+    }
+    return value;
+  });
+  const hiddenConflict = await investigateCase(mockDatabase.cases[0].caseId, {
+    provider: 'glm',
+  });
+  assert.equal(hiddenConflict.execution.actualProvider, 'recorded');
+  assert.ok(
+    hiddenConflict.execution.fallbackReason.includes('FINANCIAL_ACTION_GATE'),
+  );
 });
 await test('waiting for reversal uses specialist review and never silently accepts a refund approver', async () => {
   for (const level of ['CASE_SPECIALIST', 'L1_SUPERVISOR']) {

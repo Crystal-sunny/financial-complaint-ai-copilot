@@ -312,7 +312,10 @@ function mapModelResult(
     title: titleForEvidence(item),
     tone: toneForEvidence(item),
   }));
-  const conflict = investigator.conflicts[0];
+  // Do not hide a later unresolved conflict behind the first resolved item.
+  const conflict =
+    investigator.conflicts.find((item) => item.resolution === 'UNRESOLVED') ??
+    investigator.conflicts[0];
   return {
     runId: `RUN-${caseItem.caseId.slice(-5)}-${Date.now().toString(36).toUpperCase()}`,
     caseId: caseItem.caseId,

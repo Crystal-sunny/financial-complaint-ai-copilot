@@ -40,47 +40,85 @@ function asResponse(data: unknown): ToolResponse {
   };
 }
 
+// Date-only query boundaries use the project's business timezone (UTC+08:00).
+// Validate the calendar date before Date.parse can normalize e.g. February 30.
+function businessDayStart(value: unknown): number | null {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value))
+    return null;
+  const utc = Date.parse(`${value}T00:00:00Z`);
+  if (
+    !Number.isFinite(utc) ||
+    new Date(utc).toISOString().slice(0, 10) !== value
+  )
+    return null;
+  return Date.parse(`${value}T00:00:00+08:00`);
+}
+
+function dateRange(args: Record<string, unknown>) {
+  const from =
+    args.dateFrom === undefined ? -Infinity : businessDayStart(args.dateFrom);
+  const to =
+    args.dateTo === undefined ? Infinity : businessDayStart(args.dateTo);
+  if (from === null || to === null || from > to) return null;
+  return { from, until: to + 86400000 };
+}
+
+function invalidDateResponse(): ToolResponse {
+  return {
+    status: 'ERROR',
+    data: null,
+    error: '查询日期无效，请提供有效日期范围。',
+  };
+}
+
 export function runReadOnlyTool(
   name: ToolName,
   args: Record<string, unknown>,
   actor: AgentRole,
+  database = mockDatabase,
 ): ToolResponse {
   if (!allowedTools[name]?.includes(actor)) {
     throw new Error(`DENY_AND_AUDIT: ${actor} cannot call ${name}`);
   }
 
+  const range = dateRange(args);
+  if (!range) return invalidDateResponse();
+  const inRange = (timestamp: string) => {
+    const time = Date.parse(timestamp);
+    return Number.isFinite(time) && time >= range.from && time < range.until;
+  };
+
   switch (name) {
     case 'get_customer_profile':
       return asResponse(
-        mockDatabase.customers.find(
-          (item) => item.customerId === args.customerId,
-        ),
+        database.customers.find((item) => item.customerId === args.customerId),
       );
     case 'get_loan_contract':
       return asResponse(
-        mockDatabase.loans.find((item) => item.loanId === args.loanId),
+        database.loans.find((item) => item.loanId === args.loanId),
       );
     case 'get_repayment_plan':
       return asResponse(
-        mockDatabase.schedules.filter((item) => item.loanId === args.loanId),
+        database.schedules.filter((item) => item.loanId === args.loanId),
       );
     case 'get_payment_transactions':
       return asResponse(
-        mockDatabase.transactions.filter(
+        database.transactions.filter(
           (item) =>
             item.customerId === args.customerId &&
-            (args.loanId == null || item.loanId === args.loanId),
+            (args.loanId == null || item.loanId === args.loanId) &&
+            inRange(item.initiatedAt),
         ),
       );
     case 'get_early_repayment_requests':
       return asResponse(
-        mockDatabase.earlyRepaymentRequests.filter(
+        database.earlyRepaymentRequests.filter(
           (item) => item.loanId === args.loanId,
         ),
       );
     case 'get_support_tickets':
       return asResponse(
-        mockDatabase.tickets.filter(
+        database.tickets.filter(
           (item) =>
             item.customerId === args.customerId &&
             (args.caseId == null || item.linkedCaseId === args.caseId),
@@ -88,16 +126,31 @@ export function runReadOnlyTool(
       );
     case 'get_account_security_events':
       return asResponse(
-        mockDatabase.securityEvents.filter(
-          (item) => item.customerId === args.customerId,
+        database.securityEvents.filter(
+          (item) =>
+            item.customerId === args.customerId && inRange(item.occurredAt),
         ),
       );
-    case 'search_rules':
+    case 'search_rules': {
+      const effectiveAt = businessDayStart(args.effectiveAt);
+      if (effectiveAt === null) return invalidDateResponse();
       return asResponse(
-        mockDatabase.rules.filter((item) =>
-          item.businessTypes.includes(args.businessType as CaseType),
-        ),
+        database.rules.filter((item) => {
+          const from = businessDayStart(item.effectiveFrom);
+          const to =
+            item.effectiveTo === null
+              ? Infinity
+              : businessDayStart(item.effectiveTo);
+          return (
+            item.businessTypes.includes(args.businessType as CaseType) &&
+            from !== null &&
+            to !== null &&
+            from <= effectiveAt &&
+            effectiveAt <= to
+          );
+        }),
       );
+    }
   }
 }
 

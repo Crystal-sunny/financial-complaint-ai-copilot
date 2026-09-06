@@ -391,6 +391,7 @@ function markdownReport(report) {
 
 - 运行时间：${report.generatedAt}
 - 评测模式：${report.provider}
+- 注意：历史预期演算；未调用应用真实工具／校验器，也未运行模型。不能作为程序安全或模型准确率证明。
 - 总用例：${report.total}
 - 通过：${report.passed}
 - 失败：${report.failed}
@@ -413,7 +414,9 @@ const results = fixture.cases.map(evaluateCase);
 const passed = results.filter((item) => item.passed).length;
 const report = {
   generatedAt: new Date().toISOString(),
-  provider: 'recorded-safety-baseline',
+  provider: 'legacy-expectation-demo',
+  disclaimer:
+    'Historical expected-answer demonstration; does not call application tools, validators or models. Not evidence of application safety or model accuracy.',
   total: results.length,
   passed,
   failed: results.length - passed,
@@ -423,13 +426,16 @@ const report = {
 
 await mkdir(outputDirectory, { recursive: true });
 await writeFile(
-  resolve(outputDirectory, 'latest.json'),
+  resolve(outputDirectory, 'legacy-latest.json'),
   `${JSON.stringify(report, null, 2)}\n`,
 );
-await writeFile(resolve(outputDirectory, 'latest.md'), markdownReport(report));
+await writeFile(
+  resolve(outputDirectory, 'legacy-latest.md'),
+  markdownReport(report),
+);
 
 console.log(
-  `评测完成：${report.passed}/${report.total} 通过（${report.passRate}%）`,
+  `历史预期演算：${report.passed}/${report.total}；不代表真实程序校验或模型准确率。`,
 );
 for (const result of results.filter((item) => !item.passed)) {
   const failedChecks = result.checks
