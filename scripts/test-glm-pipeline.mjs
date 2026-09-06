@@ -336,7 +336,7 @@ await test('insufficient evidence without a conflict remains visibly unresolved'
   assert.equal(result.conflict.status, 'UNRESOLVED');
   assert.equal(result.conflict.title, '调查结论仍需补充核验');
 });
-await test('orphan reversal cannot authorize waiting without two cited successful payments', async () => {
+await test('orphan reversal is downgraded before disposition can authorize waiting', async () => {
   const database = structuredClone(mockDatabase);
   database.transactions.find(
     (item) => item.transactionId === 'TXN-8201',
@@ -347,23 +347,49 @@ await test('orphan reversal cannot authorize waiting without two cited successfu
         (item) => item.sourceRecordId !== 'TXN-8201',
       );
     if (index === 2)
-      value.recommendation.evidenceIds =
-        value.recommendation.evidenceIds.filter(
+      Object.assign(value.recommendation, {
+        actionCode: 'REQUEST_INFORMATION',
+        state: 'NEEDS_INFORMATION',
+        amount: null,
+        evidenceIds: value.recommendation.evidenceIds.filter(
           (item) => item !== 'E-DUPLICATE',
-        );
+        ),
+      });
+    if (index === 2) value.approvalRequirement.level = 'CASE_SPECIALIST';
     return value;
   });
-  await assert.rejects(
-    () =>
-      investigateSyntheticCaseForEvaluation(
-        {
-          ...mockDatabase.cases[1],
-          caseId: 'EVAL-V3-011',
-        },
-        database,
-      ),
-    { code: 'DUPLICATE_EVIDENCE_BINDING' },
+  const result = await investigateSyntheticCaseForEvaluation(
+    {
+      ...mockDatabase.cases[1],
+      caseId: 'EVAL-V3-011',
+    },
+    database,
   );
+  assert.equal(result.evidenceGate, 'INSUFFICIENT');
+  assert.equal(result.recommendation.actionCode, 'REQUEST_INFORMATION');
+});
+await test('amount-mismatched successful payments cannot establish a duplicate relationship', async () => {
+  const database = structuredClone(mockDatabase);
+  database.transactions.find(
+    (item) => item.transactionId === 'TXN-8202',
+  ).amount = 588.21;
+  stub(mockDatabase.cases[1], (value, index) => {
+    if (index === 2) {
+      value.recommendation.actionCode = 'MANUAL_REVIEW';
+      value.recommendation.state = 'NEEDS_INFORMATION';
+      value.approvalRequirement.level = 'CASE_SPECIALIST';
+    }
+    return value;
+  });
+  const result = await investigateSyntheticCaseForEvaluation(
+    {
+      ...mockDatabase.cases[1],
+      caseId: 'EVAL-V4-002',
+    },
+    database,
+  );
+  assert.equal(result.evidenceGate, 'INSUFFICIENT');
+  assert.equal(result.recommendation.actionCode, 'MANUAL_REVIEW');
 });
 for (const caseItem of mockDatabase.cases) {
   await test(`${caseItem.caseId} GLM path preserves stage order, tokens and scoped inputs`, async () => {

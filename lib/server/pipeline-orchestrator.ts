@@ -134,10 +134,20 @@ function deterministicComplaintType(
 }
 
 function enforceInvestigationGate(
+  caseItem: InvestigationCase,
   coordinator: CoordinatorOutput,
   investigator: InvestigatorOutput,
   safety: ReturnType<typeof deterministicSafetyResult>,
   availableRuleIds: Set<string>,
+  transactionRecords: Array<{
+    transactionId: string;
+    customerId: string;
+    loanId: string | null;
+    relatedScheduleId: string | null;
+    type: string;
+    amount: number;
+    status: string;
+  }>,
 ) {
   if (safety.mandatoryEscalation || coordinator.mandatoryEscalation) {
     investigator.evidenceGate.status = 'MANDATORY_ESCALATION';
@@ -145,6 +155,48 @@ function enforceInvestigationGate(
       ? safety.reason
       : '案件协调阶段识别到明确安全风险，必须升级安全团队。';
     return;
+  }
+  if (coordinator.complaintType === 'duplicate_debit') {
+    const successfulPayments = transactionRecords.filter(
+      (item) =>
+        item.customerId === caseItem.customerId &&
+        item.loanId === caseItem.loanId &&
+        ['MANUAL_REPAYMENT', 'MANUAL_REPAYMENT_RETRY'].includes(item.type) &&
+        ['SUCCESS', 'SUCCESS_AFTER_TIMEOUT'].includes(item.status) &&
+        item.relatedScheduleId !== null &&
+        item.amount > 0,
+    );
+    const reversals = transactionRecords.filter(
+      (item) =>
+        item.customerId === caseItem.customerId &&
+        item.loanId === caseItem.loanId &&
+        item.type === 'AUTOMATIC_REVERSAL' &&
+        ['PROCESSING', 'SUCCESS'].includes(item.status) &&
+        item.relatedScheduleId !== null &&
+        item.amount > 0,
+    );
+    const hasBoundDuplicate = reversals.some((reversal) => {
+      const matchingPayments = successfulPayments.filter(
+        (payment) =>
+          payment.relatedScheduleId === reversal.relatedScheduleId &&
+          payment.amount === reversal.amount,
+      );
+      return (
+        new Set(matchingPayments.map((item) => item.transactionId)).size >= 2
+      );
+    });
+    if (!hasBoundDuplicate) {
+      investigator.evidenceGate.status = 'INSUFFICIENT';
+      investigator.evidenceGate.reason =
+        '未检索到两笔同客户、同贷款、同应收、同金额的最终成功付款及匹配冲正。';
+      const field = 'duplicate_transaction_relationship';
+      if (!investigator.missingInformation.some((item) => item.field === field))
+        investigator.missingInformation.push({
+          field,
+          reason: '现有交易记录不足以确认重复扣款与冲正关系。',
+          nextAction: '补查交易终态、应收关联、金额及冲正归属。',
+        });
+    }
   }
   const requiredRules =
     coordinator.complaintType === 'early_repayment_debit'
@@ -585,11 +637,14 @@ async function investigateWithModel(
     });
   assertInvestigatorOutput(investigatorCall.output);
   calls.push(investigatorCall.metadata);
+  const validationContext = validContext(caseItem, toolRuns, database);
   enforceInvestigationGate(
+    caseItem,
     coordinatorCall.output,
     investigatorCall.output,
     safety,
-    validContext(caseItem, toolRuns, database).validRuleIds,
+    validationContext.validRuleIds,
+    validationContext.transactionRecords,
   );
 
   startStage('disposition_compliance');
