@@ -67,10 +67,7 @@ export type InvestigationResult = {
   };
   evidenceGate: 'SUFFICIENT' | 'MANDATORY_ESCALATION';
   recommendation: {
-    actionCode:
-      | 'PROPOSE_REFUND'
-      | 'WAIT_FOR_REVERSAL'
-      | 'ESCALATE_SECURITY';
+    actionCode: 'PROPOSE_REFUND' | 'WAIT_FOR_REVERSAL' | 'ESCALATE_SECURITY';
     action: string;
     amount: number | null;
     rationale: string;
@@ -82,6 +79,16 @@ export type InvestigationResult = {
     reason: string;
   };
   prohibitedActions: string[];
-  responseDraft: string;
   auditEvents: Array<{ at: string; actor: string; action: string }>;
+};
+
+export type ApprovalOutcome = {
+  approvalId: string;
+  caseId: string;
+  status: 'APPROVED';
+  completedAt: string;
+  decision: string;
+  executionStatus: string;
+  executionDeadline: string;
+  responseDraft: string;
 };

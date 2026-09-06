@@ -1,4 +1,5 @@
 import type {
+  ApprovalOutcome,
   Evidence,
   InvestigationResult,
   MockCase,
@@ -234,8 +235,6 @@ function buildDisposition(
         reason: '金额不超过 ¥2,000，进入一级组长审批。',
       },
       prohibitedActions: ['不得声称退款已完成', '不得承诺未来绝不影响征信'],
-      responseDraft:
-        '林女士，您好。我们已核实：您的贷款于 8 月 13 日 02:10 完成结清；8 月 15 日扣取的 1,248.36 元发生在结清之后，属于异常扣款。我们已形成原路退回建议，当前仍需一级组长审批，退款是否通过及到账时间以审批和渠道处理结果为准。截至当前记录，未发现该事项产生逾期记录。给您带来不便，我们深表歉意。',
       auditEvents: [
         { at: '10:26:00', actor: '系统', action: '案件进入待调查队列' },
         {
@@ -292,8 +291,6 @@ function buildDisposition(
         '不得把渠道超时解释为交易失败',
         '不得在冲正在途时重复退款',
       ],
-      responseDraft:
-        '周先生，您好。我们已核实两笔交易均指向同一期还款，系统已自动发起一笔 588.20 元冲正，目前渠道仍在处理中。为避免重复退款，我们会先确认冲正最终状态，再向您反馈后续结果。',
       auditEvents: [
         { at: '11:18:00', actor: '系统', action: '案件进入待调查队列' },
         {
@@ -347,8 +344,6 @@ function buildDisposition(
       '不得承诺资金一定追回',
       '不得声称账户已经冻结',
     ],
-    responseDraft:
-      '您好，您的反馈我们已受理。鉴于存在非本人交易陈述及异常登录风险信号，案件已升级至账户安全团队核验。在核验完成前，我们暂不能认定交易性质、责任或资金处理结果，请留意后续人工联系。',
     auditEvents: [
       { at: '08:06:00', actor: '系统', action: '案件进入安全核验队列' },
       {
@@ -392,6 +387,80 @@ export function investigateCase(caseId: string): InvestigationResult | null {
     generatedAt: '2026-09-03T14:30:00+08:00',
     toolTraces,
   };
+}
+
+const approvalOutcomes: Record<string, ApprovalOutcome> = {
+  'CMP-2026-09001': {
+    approvalId: 'APR-09001-01',
+    caseId: 'CMP-2026-09001',
+    status: 'APPROVED',
+    completedAt: '2026-08-15T11:05:00+08:00',
+    decision: '同意原路退回异常扣款 ¥1,248.36',
+    executionStatus: '退款指令已提交支付渠道',
+    executionDeadline: '预计于 2026-08-18 18:00 前到账',
+    responseDraft:
+      '林女士，您好。经核实，您的贷款已于 8 月 13 日 02:10 完成结清，8 月 15 日扣取的 1,248.36 元属于结清后的异常扣款。现已确认原路退回该笔款项，预计于 2026 年 8 月 18 日 18:00 前到账，请留意原支付账户。截至当前记录，未发现该事项产生逾期记录。给您带来不便，我们深表歉意。',
+  },
+  'CMP-2026-09002': {
+    approvalId: 'APR-09002-01',
+    caseId: 'CMP-2026-09002',
+    status: 'APPROVED',
+    completedAt: '2026-08-20T15:40:00+08:00',
+    decision: '确认重复扣款已由自动冲正处理，无需重复退款',
+    executionStatus: '自动冲正成功',
+    executionDeadline: '¥588.20 已于 2026-08-20 15:32 原路退回',
+    responseDraft:
+      '周先生，您好。经核实，您反馈的两笔 588.20 元交易指向同一期还款，其中一笔属于重复扣款。该笔款项已于 2026 年 8 月 20 日 15:32 完成原路退回，请留意原支付账户。如仍未查到入账记录，请联系我们继续核查。给您带来不便，我们深表歉意。',
+  },
+  'CMP-2026-09003': {
+    approvalId: 'APR-09003-01',
+    caseId: 'CMP-2026-09003',
+    status: 'APPROVED',
+    completedAt: '2026-08-28T08:20:00+08:00',
+    decision: '受理并转入账户安全专项核验',
+    executionStatus: '安全核验工单已建立',
+    executionDeadline: '账户安全专员将在 2026-08-28 12:00 前联系客户',
+    responseDraft:
+      '王先生，您好。您反馈的三笔非本人交易及异常登录情况已进入账户安全核验，账户安全专员将在 2026 年 8 月 28 日 12:00 前与您联系。核验完成前，请勿向他人提供验证码或账户信息；交易性质、责任及资金处理结果将以核验结论为准。',
+  },
+};
+
+const prohibitedCustomerTerms = [
+  '一级组长',
+  '二级合规',
+  'L1_SUPERVISOR',
+  'CASE_SPECIALIST',
+  'SECURITY_TEAM',
+  'Agent',
+  '审批中',
+  '待审批',
+  '规则编号',
+];
+
+function assertCustomerResponseSafe(outcome: ApprovalOutcome) {
+  if (
+    outcome.status !== 'APPROVED' ||
+    !outcome.completedAt ||
+    !outcome.decision ||
+    !outcome.executionDeadline
+  ) {
+    throw new Error('审批结果缺少对客回复所需的明确结论或处理时间');
+  }
+
+  const leakedTerm = prohibitedCustomerTerms.find((term) =>
+    outcome.responseDraft.includes(term),
+  );
+  if (leakedTerm) {
+    throw new Error(`客户回复包含内部用语：${leakedTerm}`);
+  }
+}
+
+export function approveCase(caseId: string): ApprovalOutcome | null {
+  if (!mockDatabase.cases.some((item) => item.caseId === caseId)) return null;
+  const outcome = approvalOutcomes[caseId];
+  if (!outcome) return null;
+  assertCustomerResponseSafe(outcome);
+  return outcome;
 }
 
 export function listCases() {

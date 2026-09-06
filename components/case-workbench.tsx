@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import {
   AlertTriangle,
   ArrowRight,
@@ -40,9 +40,13 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import type { Evidence, InvestigationResult } from '@/lib/domain';
+import type {
+  ApprovalOutcome,
+  Evidence,
+  InvestigationResult,
+} from '@/lib/domain';
 
-type DecisionState = 'idle' | 'approved' | 'returned' | 'replied';
+type DecisionState = 'idle' | 'pending' | 'approved' | 'returned' | 'replied';
 
 type CaseView = {
   id: string;
@@ -167,6 +171,12 @@ export function CaseWorkbench() {
   const [decisionsByCase, setDecisionsByCase] = useState<
     Record<string, DecisionState>
   >({});
+  const [approvalsByCase, setApprovalsByCase] = useState<
+    Record<string, ApprovalOutcome>
+  >({});
+  const [approvalSubmittingCaseId, setApprovalSubmittingCaseId] = useState<
+    string | null
+  >(null);
   const [evidenceByCase, setEvidenceByCase] = useState<
     Record<string, string | null>
   >({});
@@ -187,17 +197,12 @@ export function CaseWorkbench() {
   const runStep = runStepsByCase[selectedId] ?? -1;
   const isRunning = runningCaseId === selectedId;
   const decision = decisionsByCase[selectedId] ?? 'idle';
+  const approvalOutcome = approvalsByCase[selectedId] ?? null;
+  const isApprovalSubmitting = approvalSubmittingCaseId === selectedId;
   const selectedEvidenceId = evidenceByCase[selectedId] ?? null;
   const showAudit = auditByCase[selectedId] ?? false;
   const error = errorsByCase[selectedId] ?? null;
-  const selectedEvidence = useMemo(
-    () =>
-      result?.evidence.find((item) => item.evidenceId === selectedEvidenceId) ??
-      null,
-    [result, selectedEvidenceId],
-  );
-
-  const filteredCases = useMemo(() => {
+  const filteredCases = (() => {
     const normalizedQuery = searchQuery.trim().toLowerCase();
     return cases.filter((item) => {
       const itemDecision = decisionsByCase[item.id] ?? 'idle';
@@ -210,16 +215,21 @@ export function CaseWorkbench() {
       const matchesFilter =
         queueFilter === 'all' ||
         (queueFilter === 'pending' && itemDecision !== 'replied') ||
-        (queueFilter === 'review' && hasResult && itemDecision === 'idle') ||
+        (queueFilter === 'review' && hasResult && itemDecision === 'pending') ||
         (queueFilter === 'completed' && itemDecision === 'replied') ||
         (queueFilter === 'high' && item.risk === 'HIGH');
       return matchesQuery && matchesFilter;
     });
-  }, [decisionsByCase, queueFilter, resultsByCase, searchQuery]);
+  })();
 
   const pendingCases = cases.filter(
     (item) => decisionsByCase[item.id] !== 'replied',
   );
+  const handledToday =
+    12 +
+    Object.values(decisionsByCase).filter(
+      (item) => item === 'approved' || item === 'replied',
+    ).length;
 
   function selectCase(caseId: string) {
     setSelectedId(caseId);
@@ -232,6 +242,11 @@ export function CaseWorkbench() {
     const caseId = selectedCase.id;
     setErrorsByCase((current) => ({ ...current, [caseId]: null }));
     setDecisionsByCase((current) => ({ ...current, [caseId]: 'idle' }));
+    setApprovalsByCase((current) => {
+      const next = { ...current };
+      delete next[caseId];
+      return next;
+    });
     setAuditByCase((current) => ({ ...current, [caseId]: false }));
     setRunningCaseId(caseId);
     setRunStepsByCase((current) => ({ ...current, [caseId]: 0 }));
@@ -249,10 +264,8 @@ export function CaseWorkbench() {
       const data = (await response.json()) as InvestigationResult;
       await new Promise((resolve) => setTimeout(resolve, 520));
       setResultsByCase((current) => ({ ...current, [caseId]: data }));
-      setEvidenceByCase((current) => ({
-        ...current,
-        [caseId]: current[caseId] ?? data.evidence[0]?.evidenceId ?? null,
-      }));
+      setDecisionsByCase((current) => ({ ...current, [caseId]: 'pending' }));
+      setEvidenceByCase((current) => ({ ...current, [caseId]: null }));
       setRunStepsByCase((current) => ({ ...current, [caseId]: 3 }));
     } catch (cause) {
       setErrorsByCase((current) => ({
@@ -272,7 +285,34 @@ export function CaseWorkbench() {
     }));
   }
 
-  function updateEvidence(evidenceId: string) {
+  async function approveRecommendation() {
+    if (!result || approvalSubmittingCaseId) return;
+    const caseId = selectedId;
+    setApprovalSubmittingCaseId(caseId);
+    setErrorsByCase((current) => ({ ...current, [caseId]: null }));
+
+    try {
+      const response = await fetch(`/api/cases/${caseId}/approval`, {
+        method: 'POST',
+      });
+      if (!response.ok) throw new Error('审批结果暂时无法返回');
+      const outcome = (await response.json()) as ApprovalOutcome;
+      setApprovalsByCase((current) => ({ ...current, [caseId]: outcome }));
+      setDecisionsByCase((current) => ({
+        ...current,
+        [caseId]: 'approved',
+      }));
+    } catch (cause) {
+      setErrorsByCase((current) => ({
+        ...current,
+        [caseId]: cause instanceof Error ? cause.message : '审批处理失败',
+      }));
+    } finally {
+      setApprovalSubmittingCaseId(null);
+    }
+  }
+
+  function updateEvidence(evidenceId: string | null) {
     setEvidenceByCase((current) => ({ ...current, [selectedId]: evidenceId }));
   }
 
@@ -284,9 +324,9 @@ export function CaseWorkbench() {
   }
 
   async function copyDraft() {
-    if (!result) return;
+    if (!approvalOutcome) return;
     try {
-      await navigator.clipboard.writeText(result.responseDraft);
+      await navigator.clipboard.writeText(approvalOutcome.responseDraft);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1500);
     } catch {
@@ -301,11 +341,13 @@ export function CaseWorkbench() {
         ? '已批准'
         : decision === 'returned'
           ? '待补充'
-          : result?.recommendation.state === 'MANDATORY_ESCALATION'
-            ? '强制升级'
-            : result?.recommendation.state === 'NEEDS_INFORMATION'
-              ? '待复核'
-              : '待审批';
+          : decision === 'pending'
+            ? '审批中'
+            : result?.recommendation.state === 'MANDATORY_ESCALATION'
+              ? '强制升级'
+              : result?.recommendation.state === 'NEEDS_INFORMATION'
+                ? '待复核'
+                : '待审批';
 
   return (
     <main className="h-screen min-h-[720px] overflow-hidden bg-background">
@@ -346,13 +388,15 @@ export function CaseWorkbench() {
                       ? '已回复'
                       : itemDecision === 'approved'
                         ? '已批准'
-                        : itemDecision === 'returned'
-                          ? '待补充'
-                          : resultsByCase[item.id]
-                            ? '待人工处理'
-                            : runningCaseId === item.id
-                              ? '调查中'
-                              : '待调查';
+                        : itemDecision === 'pending'
+                          ? '审批中'
+                          : itemDecision === 'returned'
+                            ? '待补充'
+                            : resultsByCase[item.id]
+                              ? '待人工处理'
+                              : runningCaseId === item.id
+                                ? '调查中'
+                                : '待调查';
                   return (
                     <Button
                       key={item.id}
@@ -474,13 +518,15 @@ export function CaseWorkbench() {
                     ? '已回复'
                     : itemDecision === 'approved'
                       ? '已批准'
-                      : itemDecision === 'returned'
-                        ? '待补充'
-                        : resultsByCase[item.id]
-                          ? '待人工处理'
-                          : runningCaseId === item.id
-                            ? '调查中'
-                            : item.priority;
+                      : itemDecision === 'pending'
+                        ? '审批中'
+                        : itemDecision === 'returned'
+                          ? '待补充'
+                          : resultsByCase[item.id]
+                            ? '待人工处理'
+                            : runningCaseId === item.id
+                              ? '调查中'
+                              : item.priority;
                 return (
                   <button
                     key={item.id}
@@ -554,10 +600,17 @@ export function CaseWorkbench() {
           <div className="border-t p-4">
             <div className="flex items-center justify-between text-[11px]">
               <span className="text-slate-500">今日处理进度</span>
-              <span className="font-semibold text-slate-700">12 / 20</span>
+              <span className="font-semibold text-slate-700">
+                {handledToday} / 20
+              </span>
             </div>
             <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-200">
-              <div className="h-full w-3/5 rounded-full bg-teal-600" />
+              <div
+                className="h-full rounded-full bg-teal-600 transition-[width] duration-300"
+                style={{
+                  width: `${Math.min((handledToday / 20) * 100, 100)}%`,
+                }}
+              />
             </div>
           </div>
         </aside>
@@ -591,9 +644,13 @@ export function CaseWorkbench() {
                           ? '已回复'
                           : decision === 'approved'
                             ? '已批准'
-                            : result
-                              ? '待人工处理'
-                              : '待调查'}
+                            : decision === 'pending'
+                              ? '审批中'
+                              : decision === 'returned'
+                                ? '待补充'
+                                : result
+                                  ? '待人工处理'
+                                  : '待调查'}
                       </Badge>
                     </div>
                     <h2 className="mt-2 text-xl font-semibold tracking-tight text-slate-950">
@@ -671,53 +728,66 @@ export function CaseWorkbench() {
                             const active =
                               selectedEvidenceId === event.evidenceId;
                             return (
-                              <button
+                              <div
                                 key={event.evidenceId}
-                                type="button"
-                                onClick={() => updateEvidence(event.evidenceId)}
-                                className={`relative grid w-full grid-cols-[12px_82px_1fr] gap-3 rounded-lg text-left transition-colors ${
+                                className={`relative rounded-lg transition-colors ${
                                   active
-                                    ? 'bg-teal-50/70 py-2 pr-2 ring-1 ring-teal-700/10'
+                                    ? 'bg-teal-50/70 ring-1 ring-teal-700/10'
                                     : 'hover:bg-slate-50'
                                 }`}
                               >
-                                <EvidenceDot tone={event.tone} />
-                                <time className="pt-0.5 font-mono text-[10px] text-slate-400">
-                                  {formatEvidenceTime(event.observedAt)}
-                                </time>
-                                <div>
-                                  <p className="text-xs font-semibold text-slate-800">
-                                    {event.title}
-                                  </p>
-                                  <p className="mt-1 text-[11px] leading-[1.55] text-slate-500">
-                                    {event.claim}
-                                  </p>
-                                  <span className="mt-1.5 inline-flex items-center gap-1 text-[10px] font-medium text-teal-700">
-                                    {event.sourceRecordId}{' '}
-                                    <ArrowRight className="size-3" />
-                                  </span>
-                                </div>
-                              </button>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    updateEvidence(
+                                      active ? null : event.evidenceId,
+                                    )
+                                  }
+                                  aria-expanded={active}
+                                  className="grid w-full grid-cols-[12px_82px_1fr] gap-3 rounded-lg py-1 pr-2 text-left"
+                                >
+                                  <EvidenceDot tone={event.tone} />
+                                  <time className="pt-0.5 font-mono text-[10px] text-slate-400">
+                                    {formatEvidenceTime(event.observedAt)}
+                                  </time>
+                                  <div>
+                                    <p className="text-xs font-semibold text-slate-800">
+                                      {event.title}
+                                    </p>
+                                    <p className="mt-1 text-[11px] leading-[1.55] text-slate-500">
+                                      {event.claim}
+                                    </p>
+                                    <span className="mt-1.5 inline-flex items-center gap-1 text-[10px] font-medium text-teal-700">
+                                      {event.sourceRecordId} ·{' '}
+                                      {active ? '收起原文' : '查看原文'}
+                                      <ChevronDown
+                                        className={`size-3 transition-transform ${
+                                          active ? 'rotate-180' : ''
+                                        }`}
+                                      />
+                                    </span>
+                                  </div>
+                                </button>
+                                {active && (
+                                  <div className="mb-3 ml-[106px] mr-3 mt-2 rounded-lg border border-teal-700/15 bg-white/80 p-3">
+                                    <div className="flex items-center justify-between gap-3">
+                                      <span className="text-[10px] font-semibold text-teal-800">
+                                        证据原文
+                                      </span>
+                                      <span className="font-mono text-[9px] text-teal-700/70">
+                                        {event.sourceSystem} ·{' '}
+                                        {event.sourceRecordId}
+                                      </span>
+                                    </div>
+                                    <p className="mt-2 font-mono text-[10px] leading-5 text-slate-600">
+                                      {event.rawExcerpt}
+                                    </p>
+                                  </div>
+                                )}
+                              </div>
                             );
                           })}
                         </div>
-
-                        {selectedEvidence && (
-                          <div className="mt-5 rounded-lg border border-teal-700/15 bg-teal-50/50 p-3">
-                            <div className="flex items-center justify-between gap-3">
-                              <span className="text-[10px] font-semibold text-teal-800">
-                                证据原文
-                              </span>
-                              <span className="font-mono text-[9px] text-teal-700/70">
-                                {selectedEvidence.sourceSystem} ·{' '}
-                                {selectedEvidence.sourceRecordId}
-                              </span>
-                            </div>
-                            <p className="mt-2 font-mono text-[10px] leading-5 text-slate-600">
-                              {selectedEvidence.rawExcerpt}
-                            </p>
-                          </div>
-                        )}
                       </div>
                     </div>
                   ) : (
@@ -983,9 +1053,11 @@ export function CaseWorkbench() {
                     ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
                     : decision === 'approved'
                       ? 'border-teal-200 bg-teal-50 text-teal-700'
-                      : result
-                        ? 'text-slate-700'
-                        : 'text-slate-500'
+                      : decision === 'pending'
+                        ? 'border-amber-200 bg-amber-50 text-amber-700'
+                        : result
+                          ? 'text-slate-700'
+                          : 'text-slate-500'
                 }
               >
                 {result ? recommendationBadge : '未生成'}
@@ -1045,14 +1117,120 @@ export function CaseWorkbench() {
                   </ul>
                 </div>
 
-                <div className="rounded-lg border bg-slate-50 p-3">
-                  <div className="flex items-center gap-2 text-[10px] font-semibold text-slate-700">
-                    <Gavel className="size-3.5 text-teal-700" />
-                    {approvalLabels[result.approval.level]}
+                <div className="rounded-xl border bg-slate-50 p-3.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 text-[11px] font-semibold text-slate-800">
+                      <Gavel className="size-3.5 text-teal-700" />
+                      审批流程
+                    </div>
+                    <Badge
+                      variant="outline"
+                      className={
+                        decision === 'approved' || decision === 'replied'
+                          ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                          : decision === 'returned'
+                            ? 'border-amber-200 bg-amber-50 text-amber-700'
+                            : 'border-teal-200 bg-teal-50 text-teal-700'
+                      }
+                    >
+                      {decision === 'approved' || decision === 'replied'
+                        ? '已通过'
+                        : decision === 'returned'
+                          ? '已退回'
+                          : '审批中'}
+                    </Badge>
                   </div>
-                  <p className="mt-1.5 text-[10px] leading-4 text-slate-500">
-                    {result.approval.reason}
-                  </p>
+
+                  <div className="mt-3 space-y-3">
+                    <div className="flex gap-2.5">
+                      <span className="grid size-5 shrink-0 place-items-center rounded-full bg-emerald-100 text-emerald-700">
+                        <Check className="size-3" />
+                      </span>
+                      <div>
+                        <p className="text-[10px] font-semibold text-slate-700">
+                          处置建议已自动提交
+                        </p>
+                        <p className="mt-0.5 text-[9px] leading-4 text-slate-500">
+                          {approvalLabels[result.approval.level]} ·{' '}
+                          {result.approval.reason}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex gap-2.5">
+                      <span
+                        className={`grid size-5 shrink-0 place-items-center rounded-full ${
+                          decision === 'approved' || decision === 'replied'
+                            ? 'bg-emerald-100 text-emerald-700'
+                            : decision === 'returned'
+                              ? 'bg-amber-100 text-amber-700'
+                              : 'bg-teal-100 text-teal-700'
+                        }`}
+                      >
+                        {isApprovalSubmitting ? (
+                          <LoaderCircle className="size-3 animate-spin" />
+                        ) : decision === 'approved' ||
+                          decision === 'replied' ? (
+                          <Check className="size-3" />
+                        ) : decision === 'returned' ? (
+                          <RotateCcw className="size-3" />
+                        ) : (
+                          <Clock3 className="size-3" />
+                        )}
+                      </span>
+                      <div>
+                        <p className="text-[10px] font-semibold text-slate-700">
+                          {isApprovalSubmitting
+                            ? '正在获取审批结果'
+                            : decision === 'approved' || decision === 'replied'
+                              ? '审批已通过'
+                              : decision === 'returned'
+                                ? '已退回补充'
+                                : '等待审批人处理'}
+                        </p>
+                        <p className="mt-0.5 text-[9px] leading-4 text-slate-500">
+                          {approvalOutcome
+                            ? `${approvalOutcome.completedAt} · ${approvalOutcome.approvalId}`
+                            : decision === 'returned'
+                              ? '需补充证据后重新提交'
+                              : '审批完成前不生成对客回复'}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex gap-2.5">
+                      <span
+                        className={`grid size-5 shrink-0 place-items-center rounded-full ${
+                          approvalOutcome
+                            ? 'bg-emerald-100 text-emerald-700'
+                            : 'bg-slate-200 text-slate-500'
+                        }`}
+                      >
+                        {approvalOutcome ? (
+                          <Check className="size-3" />
+                        ) : (
+                          <Clock3 className="size-3" />
+                        )}
+                      </span>
+                      <div>
+                        <p className="text-[10px] font-semibold text-slate-700">
+                          {approvalOutcome
+                            ? '处理结论与时限已确认'
+                            : '等待明确处理结论与时间'}
+                        </p>
+                        {approvalOutcome && (
+                          <div className="mt-1 space-y-1 text-[9px] leading-4 text-slate-500">
+                            <p>{approvalOutcome.decision}</p>
+                            <p>{approvalOutcome.executionStatus}</p>
+                            <p>
+                              最晚完成时间：{approvalOutcome.executionDeadline}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
                   <div className="mt-2 flex flex-wrap gap-1">
                     {result.recommendation.ruleIds.map((ruleId) => (
                       <span
@@ -1076,32 +1254,36 @@ export function CaseWorkbench() {
                   </ul>
                 </div>
 
-                {(decision === 'approved' || decision === 'replied') && (
-                  <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4">
-                    <div className="flex items-center justify-between">
-                      <p className="flex items-center gap-2 text-xs font-semibold text-emerald-900">
-                        <ClipboardCheck className="size-4" />
-                        客户回复草稿
+                {approvalOutcome &&
+                  (decision === 'approved' || decision === 'replied') && (
+                    <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4">
+                      <div className="flex items-center justify-between">
+                        <p className="flex items-center gap-2 text-xs font-semibold text-emerald-900">
+                          <ClipboardCheck className="size-4" />
+                          客户回复草稿
+                        </p>
+                        <Button
+                          variant="ghost"
+                          size="xs"
+                          onClick={copyDraft}
+                          className="text-emerald-800"
+                        >
+                          {copied ? (
+                            <Check data-icon="inline-start" />
+                          ) : (
+                            <Copy data-icon="inline-start" />
+                          )}
+                          {copied ? '已复制' : '复制'}
+                        </Button>
+                      </div>
+                      <p className="mt-2 text-[9px] text-emerald-700">
+                        根据已通过的处理结论生成
                       </p>
-                      <Button
-                        variant="ghost"
-                        size="xs"
-                        onClick={copyDraft}
-                        className="text-emerald-800"
-                      >
-                        {copied ? (
-                          <Check data-icon="inline-start" />
-                        ) : (
-                          <Copy data-icon="inline-start" />
-                        )}
-                        {copied ? '已复制' : '复制'}
-                      </Button>
+                      <p className="mt-3 text-[11px] leading-[1.7] text-slate-600">
+                        {approvalOutcome.responseDraft}
+                      </p>
                     </div>
-                    <p className="mt-3 text-[11px] leading-[1.7] text-slate-600">
-                      {result.responseDraft}
-                    </p>
-                  </div>
-                )}
+                  )}
 
                 {decision === 'returned' && (
                   <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-[10px] leading-4 text-amber-800">
@@ -1119,36 +1301,38 @@ export function CaseWorkbench() {
                 尚无处置建议
               </p>
               <p className="mt-2 max-w-[230px] text-[11px] leading-[1.65] text-slate-400">
-                完成证据调查后，这里将展示责任判断、处理建议、风险边界与回复草稿。
+                完成证据调查后，这里将展示责任判断、处理建议与审批流程；客户回复草稿仅在审批结论确认后生成。
               </p>
             </div>
           )}
 
           <div className="border-t bg-slate-50 p-4">
             <div className="flex items-center justify-between text-[11px]">
-              <span className="text-slate-500">人工决策</span>
+              <span className="text-slate-500">审批操作</span>
               <span
                 className={
                   decision === 'replied'
                     ? 'font-medium text-emerald-700'
                     : decision === 'approved'
                       ? 'font-medium text-teal-700'
-                      : 'text-slate-400'
+                      : decision === 'pending'
+                        ? 'font-medium text-amber-700'
+                        : 'text-slate-400'
                 }
               >
                 {decision === 'replied'
                   ? '已完成回复'
                   : decision === 'approved'
-                    ? '建议已批准'
-                    : decision === 'returned'
-                      ? '已退回补充'
-                      : result
-                        ? approvalLabels[result.approval.level]
-                        : '未就绪'}
+                    ? '结论已确认'
+                    : decision === 'pending'
+                      ? '已自动提交'
+                      : decision === 'returned'
+                        ? '已退回补充'
+                        : '未提交'}
               </span>
             </div>
 
-            {decision === 'approved' ? (
+            {decision === 'approved' && approvalOutcome ? (
               <Button
                 onClick={() => updateDecision('replied')}
                 className="mt-3 h-9 w-full text-xs"
@@ -1163,7 +1347,12 @@ export function CaseWorkbench() {
             ) : (
               <div className="mt-3 grid grid-cols-2 gap-2">
                 <Button
-                  disabled={!result || isRunning}
+                  disabled={
+                    !result ||
+                    isRunning ||
+                    isApprovalSubmitting ||
+                    decision === 'returned'
+                  }
                   variant="outline"
                   onClick={() => updateDecision('returned')}
                   className="h-9 text-xs"
@@ -1171,13 +1360,26 @@ export function CaseWorkbench() {
                   退回补充
                 </Button>
                 <Button
-                  disabled={!result || isRunning}
-                  onClick={() => updateDecision('approved')}
+                  disabled={
+                    !result ||
+                    isRunning ||
+                    isApprovalSubmitting ||
+                    decision === 'returned'
+                  }
+                  onClick={approveRecommendation}
                   className="h-9 text-xs"
                 >
-                  {result?.recommendation.state === 'MANDATORY_ESCALATION'
-                    ? '批准转办'
-                    : '批准建议'}
+                  {isApprovalSubmitting ? (
+                    <LoaderCircle
+                      data-icon="inline-start"
+                      className="animate-spin"
+                    />
+                  ) : null}
+                  {isApprovalSubmitting
+                    ? '审批处理中…'
+                    : result?.recommendation.state === 'MANDATORY_ESCALATION'
+                      ? '确认转办'
+                      : '审批通过'}
                 </Button>
               </div>
             )}
