@@ -701,7 +701,7 @@ export function CaseWorkbench() {
 
         <section className="ledger-grid min-h-0 overflow-hidden">
           <ScrollArea className="h-full">
-            <div className="mx-auto max-w-[920px] p-5 pb-12">
+            <div className="@container mx-auto max-w-[920px] p-5 pb-12">
               <div className="rounded-xl border bg-white px-5 py-4 shadow-[0_6px_24px_rgb(15_23_42/4%)]">
                 <div className="flex items-start justify-between gap-5">
                   <div className="min-w-0">
@@ -762,10 +762,10 @@ export function CaseWorkbench() {
                 </div>
               </div>
 
-              <div className="mt-4 grid grid-cols-[minmax(0,1fr)_270px] gap-4">
-                <div className="space-y-4">
+              <div className="mt-4 grid grid-cols-1 gap-4 @min-[680px]:grid-cols-[minmax(0,1fr)_340px]">
+                <div className="min-w-0 space-y-4">
                   <div className="rounded-xl border bg-white shadow-[0_6px_24px_rgb(15_23_42/4%)]">
-                    <div className="flex items-center justify-between border-b px-5 py-3.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b px-5 py-3.5">
                       <div className="flex items-center gap-2">
                         <UserRound className="size-4 text-teal-700" />
                         <h3 className="text-sm font-semibold text-slate-900">
@@ -795,7 +795,7 @@ export function CaseWorkbench() {
 
                   {result ? (
                     <div className="rounded-xl border bg-white shadow-[0_6px_24px_rgb(15_23_42/4%)]">
-                      <div className="flex items-center justify-between border-b px-5 py-3.5">
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b px-5 py-3.5">
                         <div className="flex items-center gap-2">
                           <FileCheck2 className="size-4 text-teal-700" />
                           <h3 className="text-sm font-semibold text-slate-900">
@@ -828,20 +828,20 @@ export function CaseWorkbench() {
                                     )
                                   }
                                   aria-expanded={active}
-                                  className="grid w-full grid-cols-[12px_82px_1fr] gap-3 rounded-lg py-1 pr-2 text-left"
+                                  className="grid w-full grid-cols-[12px_82px_minmax(0,1fr)] gap-3 rounded-lg py-1 pr-2 text-left"
                                 >
                                   <EvidenceDot tone={event.tone} />
                                   <time className="pt-0.5 font-mono text-[10px] text-slate-400">
                                     {formatEvidenceTime(event.observedAt)}
                                   </time>
-                                  <div>
+                                  <div className="min-w-0 break-words">
                                     <p className="text-xs font-semibold text-slate-800">
                                       {event.title}
                                     </p>
                                     <p className="mt-1 text-[11px] leading-[1.55] text-slate-500">
                                       {event.claim}
                                     </p>
-                                    <span className="mt-1.5 inline-flex items-center gap-1 text-[10px] font-medium text-teal-700">
+                                    <span className="mt-1.5 inline-flex max-w-full flex-wrap items-center gap-1 break-all text-[10px] font-medium text-teal-700">
                                       {event.sourceRecordId} ·{' '}
                                       {active ? '收起原文' : '查看原文'}
                                       <ChevronDown
@@ -955,10 +955,10 @@ export function CaseWorkbench() {
                   )}
                 </div>
 
-                <div className="space-y-4">
+                <div className="min-w-0 space-y-4">
                   <div className="overflow-hidden rounded-xl border bg-white shadow-[0_6px_24px_rgb(15_23_42/4%)]">
                     <div className="border-b border-teal-900/10 bg-gradient-to-br from-teal-950 to-teal-800 p-4 text-white">
-                      <div className="flex items-center justify-between gap-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
                         <div className="flex items-center gap-2">
                           <div className="grid size-7 place-items-center rounded-lg bg-white/10 ring-1 ring-white/15">
                             <Workflow className="size-4 text-emerald-300" />
@@ -1019,14 +1019,14 @@ export function CaseWorkbench() {
 
                       {result ? (
                         <div className="mt-3 rounded-lg border border-teal-800/10 bg-teal-50/55 p-2.5">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold text-teal-900">
-                              <Activity className="size-3.5 text-teal-700" />
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="inline-flex min-w-0 items-center gap-1.5 break-all text-[10px] font-semibold text-teal-900">
+                              <Activity className="size-3.5 shrink-0 text-teal-700" />
                               {result.execution.actualProvider === 'openai'
                                 ? result.execution.model
                                 : '稳定执行流'}
                             </span>
-                            <span className="font-mono text-[8px] text-teal-700/70">
+                            <span className="max-w-full break-all font-mono text-[8px] text-teal-700/70">
                               {result.runId}
                             </span>
                           </div>
@@ -1104,10 +1104,10 @@ export function CaseWorkbench() {
                                     )}
                                   </span>
                                   <span className="min-w-0 flex-1">
-                                    <span className="block truncate text-[10px] font-semibold text-slate-800">
+                                    <span className="block break-words text-[10px] font-semibold leading-4 text-slate-800">
                                       {stage.label}
                                     </span>
-                                    <span className="mt-0.5 block truncate text-[8px] font-normal text-slate-400">
+                                    <span className="mt-0.5 block break-words text-[8px] font-normal leading-3.5 text-slate-400">
                                       {stage.detail}
                                     </span>
                                   </span>
