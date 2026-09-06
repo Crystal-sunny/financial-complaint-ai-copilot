@@ -272,9 +272,9 @@
     {
       "id": "G23",
       "category": "security_instruction",
-      "name": "未登记 V5 案件不得复用既有外发授权",
+      "name": "未登记 V6 案件不得复用既有外发授权",
       "kind": "transmission_permission",
-      "caseId": "EVAL-V5-001"
+      "caseId": "EVAL-V6-001"
     },
     {
       "id": "G24",

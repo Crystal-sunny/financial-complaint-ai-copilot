@@ -8,7 +8,7 @@ const { investigateSyntheticCaseForEvaluation } =
   await import('../lib/server/pipeline-orchestrator.ts');
 
 const [firstArgument, secondArgument] = process.argv.slice(2);
-const suite = /^v[234]$/.test(firstArgument ?? '') ? firstArgument : 'v2';
+const suite = /^v[2345]$/.test(firstArgument ?? '') ? firstArgument : 'v2';
 const batchName = suite === firstArgument ? secondArgument : firstArgument;
 assert.ok(batchName, 'Provide a frozen batch name such as batch-1');
 const datasetBaseName = `model-candidates-${suite}`;
@@ -40,7 +40,7 @@ const selectedIds =
 assert.ok(selectedIds, `Unknown frozen batch: ${batchName}`);
 assert.ok(selectedIds.length >= 1 && selectedIds.length <= 3);
 const evaluationKind = Object.hasOwn(lock.batches, batchName)
-  ? ['v3', 'v4'].includes(suite)
+  ? ['v3', 'v4', 'v5'].includes(suite)
     ? 'FROZEN_HOLDOUT'
     : 'FROZEN_BASELINE'
   : 'DEVELOPMENT_REGRESSION';

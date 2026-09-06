@@ -36,7 +36,7 @@ async function loadSuite(suite) {
     ),
   };
 }
-const suites = await Promise.all(['v2', 'v3', 'v4'].map(loadSuite));
+const suites = await Promise.all(['v2', 'v3', 'v4', 'v5'].map(loadSuite));
 for (const { text, dataset, lock } of suites) {
   assert.equal(dataset.cases.length, 12);
   assert.equal(new Set(dataset.cases.map((item) => item.id)).size, 12);
@@ -60,9 +60,15 @@ const [
   { text, dataset },
   { text: holdoutText, dataset: holdout },
   { text: v4Text, dataset: v4 },
+  { text: v5Text, dataset: v5 },
 ] = suites;
 const original = JSON.stringify(mockDatabase);
-for (const sample of [...dataset.cases, ...holdout.cases, ...v4.cases]) {
+for (const sample of [
+  ...dataset.cases,
+  ...holdout.cases,
+  ...v4.cases,
+  ...v5.cases,
+]) {
   const prepared = prepareCandidate(sample);
   assert.deepEqual(Object.keys(prepared.case).sort(), [
     'caseId',
@@ -87,13 +93,13 @@ for (const sample of [...dataset.cases, ...holdout.cases, ...v4.cases]) {
   prepared.database.transactions.length = 0;
   assert.ok(again.database.transactions.length > 0);
 }
-assert.throws(() => assertInvestigationProviderAllowed('glm', 'EVAL-V5-001'), {
+assert.throws(() => assertInvestigationProviderAllowed('glm', 'EVAL-V6-001'), {
   code: 'CASE_DATA_TRANSMISSION_PAUSED',
 });
 assert.equal(JSON.stringify(mockDatabase), original);
 let passed = 1;
 console.log(
-  'PASS 36 candidate fixtures are isolated, expectation-free and registered only for GLM evaluation',
+  'PASS 48 candidate fixtures are isolated, expectation-free and registered only for GLM evaluation',
 );
 function test(name, fn) {
   fn();
@@ -243,6 +249,38 @@ test('V4 post-fix set materializes orphan reversal and final-success variants', 
     'SUCCESS_AFTER_TIMEOUT',
   );
 });
+test('V5 holdout materializes compound amount, state and tenant boundaries', () => {
+  const amountState = prepareCandidate(
+    v5.cases.find((item) => item.id === 'EVAL-V5-001'),
+  );
+  const payment = amountState.database.transactions.find(
+    (item) => item.transactionId === 'TXN-8159',
+  );
+  assert.equal(payment.status, 'SUCCESS_AFTER_TIMEOUT');
+  assert.equal(payment.amount, 1999.99);
+  assert.equal(
+    amountState.database.schedules.find(
+      (item) => item.scheduleId === 'SCHED-3001-06',
+    ).total,
+    1999.99,
+  );
+  const tenantBoundary = prepareCandidate(
+    v5.cases.find((item) => item.id === 'EVAL-V5-011'),
+  );
+  assert.equal(
+    runReadOnlyTool(
+      'get_account_security_events',
+      {
+        customerId: tenantBoundary.case.customerId,
+        dateFrom: '2026-08-28',
+        dateTo: '2026-08-28',
+      },
+      'fact_rule_investigator',
+      tenantBoundary.database,
+    ).status,
+    'NOT_FOUND',
+  );
+});
 const stable = await investigateCase('CMP-2026-09002');
 test('stable waiting-for-reversal workflow is approval-ready without claiming completion', () => {
   assert.equal(stable.recommendation.state, 'PENDING_APPROVAL');
@@ -254,11 +292,12 @@ assert.equal(requests, 0);
 console.log(
   JSON.stringify({
     checks: passed,
-    candidateCount: 36,
+    candidateCount: 48,
     candidateSha256: {
       v2: createHash('sha256').update(text).digest('hex'),
       v3: createHash('sha256').update(holdoutText).digest('hex'),
       v4: createHash('sha256').update(v4Text).digest('hex'),
+      v5: createHash('sha256').update(v5Text).digest('hex'),
     },
     modelEvaluation: 'NOT_RUN',
     networkAttempts: requests,

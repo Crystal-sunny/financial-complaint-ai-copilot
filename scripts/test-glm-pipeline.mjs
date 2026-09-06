@@ -160,7 +160,7 @@ await test('authorization enables configured GLM but does not authorize OpenAI o
   assert.equal(getRuntimeCapabilities().glm.available, true);
   assert.equal(getRuntimeCapabilities().openai.available, false);
   assert.doesNotThrow(() =>
-    assertInvestigationProviderAllowed('glm', 'EVAL-V4-012'),
+    assertInvestigationProviderAllowed('glm', 'EVAL-V5-012'),
   );
   assert.throws(() =>
     assertInvestigationProviderAllowed('openai', mockDatabase.cases[0].caseId),
