@@ -353,6 +353,20 @@
         }
       ],
       "expectedError": "DUPLICATE_EVIDENCE_BINDING"
+    },
+    {
+      "id": "G31",
+      "category": "relationship_integrity",
+      "name": "缺少应收关联的成功扣款不得进入退款审批",
+      "kind": "validation",
+      "databaseChanges": [
+        {
+          "collection": "transactions",
+          "id": "TXN-8159",
+          "set": { "relatedScheduleId": null }
+        }
+      ],
+      "expectedError": "REFUND_EVIDENCE_BINDING"
     }
   ]
 }

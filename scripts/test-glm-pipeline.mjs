@@ -391,6 +391,29 @@ await test('amount-mismatched successful payments cannot establish a duplicate r
   assert.equal(result.evidenceGate, 'INSUFFICIENT');
   assert.equal(result.recommendation.actionCode, 'MANUAL_REVIEW');
 });
+await test('unbound scheduled debit is downgraded before refund disposition', async () => {
+  const database = structuredClone(mockDatabase);
+  database.transactions.find(
+    (item) => item.transactionId === 'TXN-8159',
+  ).relatedScheduleId = null;
+  stub(mockDatabase.cases[0], (value, index) => {
+    if (index === 2) {
+      value.recommendation.actionCode = 'MANUAL_REVIEW';
+      value.recommendation.state = 'NEEDS_INFORMATION';
+      value.approvalRequirement.level = 'CASE_SPECIALIST';
+    }
+    return value;
+  });
+  const result = await investigateSyntheticCaseForEvaluation(
+    {
+      ...mockDatabase.cases[0],
+      caseId: 'EVAL-V5-004',
+    },
+    database,
+  );
+  assert.equal(result.evidenceGate, 'INSUFFICIENT');
+  assert.equal(result.recommendation.actionCode, 'MANUAL_REVIEW');
+});
 for (const caseItem of mockDatabase.cases) {
   await test(`${caseItem.caseId} GLM path preserves stage order, tokens and scoped inputs`, async () => {
     const calls = stub(caseItem);

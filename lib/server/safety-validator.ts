@@ -20,6 +20,10 @@ type ValidationContext = {
     amount: number;
     status: string;
   }>;
+  scheduleRecords: Array<{
+    scheduleId: string;
+    loanId: string;
+  }>;
 };
 
 export class InvestigationValidationError extends Error {
@@ -188,6 +192,31 @@ export function validateInvestigation(
   );
   checks.push(
     pass('DUPLICATE_EVIDENCE_BINDING', '重复扣款事实与在途冲正证据绑定有效'),
+  );
+
+  const refundEvidenceBound = context.transactionRecords.some(
+    (item) =>
+      recommendationSources.has(item.transactionId) &&
+      item.customerId === context.currentCustomerId &&
+      item.loanId === context.currentLoanId &&
+      item.type === 'SCHEDULED_DEBIT' &&
+      ['SUCCESS', 'SUCCESS_AFTER_TIMEOUT'].includes(item.status) &&
+      item.amount > 0 &&
+      item.relatedScheduleId !== null &&
+      context.scheduleRecords.some(
+        (schedule) =>
+          schedule.scheduleId === item.relatedScheduleId &&
+          schedule.loanId === context.currentLoanId,
+      ),
+  );
+  assertCondition(
+    result.recommendation.actionCode !== 'PROPOSE_REFUND' ||
+      refundEvidenceBound,
+    'REFUND_EVIDENCE_BINDING',
+    '退款建议缺少当前客户、贷款、应收与最终成功扣款的有效关系',
+  );
+  checks.push(
+    pass('REFUND_EVIDENCE_BINDING', '退款建议与当前贷款应收及成功扣款绑定有效'),
   );
 
   const actionRuleRequirements = {

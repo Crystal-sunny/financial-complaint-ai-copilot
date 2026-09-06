@@ -148,6 +148,10 @@ function enforceInvestigationGate(
     amount: number;
     status: string;
   }>,
+  scheduleRecords: Array<{
+    scheduleId: string;
+    loanId: string;
+  }>,
 ) {
   if (safety.mandatoryEscalation || coordinator.mandatoryEscalation) {
     investigator.evidenceGate.status = 'MANDATORY_ESCALATION';
@@ -195,6 +199,34 @@ function enforceInvestigationGate(
           field,
           reason: '现有交易记录不足以确认重复扣款与冲正关系。',
           nextAction: '补查交易终态、应收关联、金额及冲正归属。',
+        });
+    }
+  }
+  if (coordinator.complaintType === 'early_repayment_debit') {
+    const hasBoundScheduledDebit = transactionRecords.some(
+      (item) =>
+        item.customerId === caseItem.customerId &&
+        item.loanId === caseItem.loanId &&
+        item.type === 'SCHEDULED_DEBIT' &&
+        ['SUCCESS', 'SUCCESS_AFTER_TIMEOUT'].includes(item.status) &&
+        item.amount > 0 &&
+        item.relatedScheduleId !== null &&
+        scheduleRecords.some(
+          (schedule) =>
+            schedule.scheduleId === item.relatedScheduleId &&
+            schedule.loanId === caseItem.loanId,
+        ),
+    );
+    if (!hasBoundScheduledDebit) {
+      investigator.evidenceGate.status = 'INSUFFICIENT';
+      investigator.evidenceGate.reason =
+        '未检索到可绑定当前客户、贷款与应收计划的最终成功异常扣款。';
+      const field = 'scheduled_debit_relationship';
+      if (!investigator.missingInformation.some((item) => item.field === field))
+        investigator.missingInformation.push({
+          field,
+          reason: '成功扣款缺少当前贷款应收关系，不能确认属于本次争议。',
+          nextAction: '补查扣款流水与应收计划的稳定关联后再形成退款建议。',
         });
     }
   }
@@ -324,12 +356,22 @@ function validContext(
           : [],
       )
     : database.transactions;
+  const scheduleRecords = toolRuns
+    ? toolRuns.flatMap((run) =>
+        run.name === 'get_repayment_plan' &&
+        run.response.status === 'OK' &&
+        Array.isArray(run.response.data)
+          ? run.response.data
+          : [],
+      )
+    : database.schedules;
   return {
     validSourceRecordIds: sourceIds,
     validRuleIds: ruleIds,
     currentCustomerId: caseItem.customerId,
     currentLoanId: caseItem.loanId,
     transactionRecords,
+    scheduleRecords,
   };
 }
 
@@ -645,6 +687,7 @@ async function investigateWithModel(
     safety,
     validationContext.validRuleIds,
     validationContext.transactionRecords,
+    validationContext.scheduleRecords,
   );
 
   startStage('disposition_compliance');

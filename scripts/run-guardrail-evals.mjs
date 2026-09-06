@@ -33,7 +33,7 @@ assert.equal(
   dataset.scope,
   'offline-application-regression-not-model-accuracy',
 );
-assert.equal(dataset.cases.length, 30);
+assert.equal(dataset.cases.length, 31);
 assert.equal(
   new Set(dataset.cases.map((item) => item.id)).size,
   dataset.cases.length,
@@ -80,8 +80,27 @@ function schemaFixture(schema) {
 }
 function recordId(record) {
   return (
-    record.transactionId ?? record.ruleId ?? record.eventId ?? record.loanId
+    record.transactionId ??
+    record.ruleId ??
+    record.eventId ??
+    record.loanId ??
+    record.scheduleId
   );
+}
+function applyDatabaseChanges(database, changes = []) {
+  for (const patch of changes) {
+    assert.ok(
+      ['transactions', 'rules', 'securityEvents', 'schedules'].includes(
+        patch.collection,
+      ),
+    );
+    const index = database[patch.collection].findIndex(
+      (item) => recordId(item) === patch.id,
+    );
+    assert.ok(index >= 0, 'Unknown database patch target');
+    if (patch.remove) database[patch.collection].splice(index, 1);
+    else Object.assign(database[patch.collection][index], patch.set);
+  }
 }
 function evaluate(sample) {
   if (sample.kind === 'validation') {
@@ -89,6 +108,7 @@ function evaluate(sample) {
       (item) => item.caseId === (sample.baseCaseId ?? 'CMP-2026-09001'),
     );
     assert.ok(caseItem, 'Unknown validation base case');
+    const database = structuredClone(mockDatabase);
     const result = structuredClone(investigateRecordedCase(caseItem.caseId));
     const context = {
       validSourceRecordIds: new Set(
@@ -97,10 +117,12 @@ function evaluate(sample) {
       validRuleIds: new Set(result.recommendation.ruleIds),
       currentCustomerId: caseItem.customerId,
       currentLoanId: caseItem.loanId,
-      transactionRecords: mockDatabase.transactions,
+      transactionRecords: database.transactions,
+      scheduleRecords: database.schedules,
     };
     // Positive control: a broken or deny-all validator must fail this suite.
     validateInvestigation(result, context);
+    applyDatabaseChanges(database, sample.databaseChanges);
     applyPatches(result, sample.patches);
     for (const patch of sample.tracePatches ?? []) {
       const trace = result.toolTraces.find((item) => item.name === patch.name);
@@ -119,17 +141,7 @@ function evaluate(sample) {
   }
   if (sample.kind === 'tool') {
     const database = structuredClone(mockDatabase);
-    for (const patch of sample.databaseChanges ?? []) {
-      assert.ok(
-        ['transactions', 'rules', 'securityEvents'].includes(patch.collection),
-      );
-      const index = database[patch.collection].findIndex(
-        (item) => recordId(item) === patch.id,
-      );
-      assert.ok(index >= 0, 'Unknown database patch target');
-      if (patch.remove) database[patch.collection].splice(index, 1);
-      else Object.assign(database[patch.collection][index], patch.set);
-    }
+    applyDatabaseChanges(database, sample.databaseChanges);
     const snapshot = JSON.stringify(database);
     const response = runReadOnlyTool(
       sample.tool,
@@ -207,6 +219,7 @@ for (const item of mockDatabase.cases) {
     currentCustomerId: item.customerId,
     currentLoanId: item.loanId,
     transactionRecords: mockDatabase.transactions,
+    scheduleRecords: mockDatabase.schedules,
   });
 }
 const results = dataset.cases.map((sample) => {
