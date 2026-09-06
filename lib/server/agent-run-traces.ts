@@ -1,7 +1,7 @@
 import type {
   AgentRunTrace,
   CaseType,
-  MockCase,
+  InvestigationCase,
   ProviderMode,
   ToolTrace,
 } from '../domain';
@@ -67,7 +67,7 @@ function modelMetrics(call: ModelCallMetadata | undefined) {
 }
 
 export function buildAgentRunTraces(options: {
-  caseItem: MockCase;
+  caseItem: InvestigationCase;
   result: InvestigationPayload;
   provider: ProviderMode;
   modelCalls?: ModelCallMetadata[];

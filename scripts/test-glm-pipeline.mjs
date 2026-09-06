@@ -9,7 +9,7 @@ delete process.env.GLM_CASE_DATA_PAUSED;
 globalThis.fetch = async () => {
   throw new Error('Unexpected network attempt');
 };
-const { investigateCase } =
+const { investigateCase, investigateSyntheticCaseForEvaluation } =
   await import('../lib/server/pipeline-orchestrator.ts');
 const { getRuntimeCapabilities } =
   await import('../lib/server/model-provider.ts');
@@ -140,6 +140,7 @@ function stub(caseItem, mutate = (value) => value) {
   return () => calls;
 }
 await test('authorization enables configured GLM but does not authorize OpenAI or additional cases', () => {
+  assert.equal(getRuntimeCapabilities().defaultProvider, 'glm');
   assert.equal(getRuntimeCapabilities().glm.available, true);
   assert.equal(getRuntimeCapabilities().openai.available, false);
   assert.throws(() =>
@@ -148,6 +149,23 @@ await test('authorization enables configured GLM but does not authorize OpenAI o
   assert.throws(() =>
     assertInvestigationProviderAllowed('glm', 'UNAUTHORIZED-CASE'),
   );
+});
+await test('isolated synthetic evaluation uses its supplied database and has no recorded fallback', async () => {
+  const caseItem = {
+    ...mockDatabase.cases[0],
+    caseId: 'EVAL-V2-003',
+    customerRequests: ['核验客户描述，但数据库中缺少所称成功流水。'],
+  };
+  const database = structuredClone(mockDatabase);
+  database.transactions = database.transactions.filter(
+    (item) => item.transactionId !== 'TXN-8159',
+  );
+  const calls = stub(mockDatabase.cases[0]);
+  await assert.rejects(
+    investigateSyntheticCaseForEvaluation(caseItem, database),
+    (error) => error?.code === 'MODEL_SOURCE_REFERENCE',
+  );
+  assert.equal(calls(), 3);
 });
 for (const caseItem of mockDatabase.cases) {
   await test(`${caseItem.caseId} GLM path preserves stage order, tokens and scoped inputs`, async () => {

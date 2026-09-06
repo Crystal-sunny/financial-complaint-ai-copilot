@@ -274,7 +274,7 @@
       "category": "security_instruction",
       "name": "新增案件不得复用原三案的外发授权",
       "kind": "transmission_permission",
-      "caseId": "EVAL-V2-001"
+      "caseId": "EVAL-V3-001"
     },
     {
       "id": "G24",

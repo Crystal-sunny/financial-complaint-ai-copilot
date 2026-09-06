@@ -70,12 +70,13 @@ export function getRuntimeCapabilities(): RuntimeCapabilities {
   const transmission = getCaseDataTransmissionStatus();
   const glmConfigured =
     Boolean(process.env.GLM_API_KEY?.trim()) && validGlmBaseURL();
+  const glmAvailable = glmConfigured && transmission === 'allowed';
   return {
-    defaultProvider: 'recorded',
+    defaultProvider: glmAvailable ? 'glm' : 'recorded',
     caseDataTransmission: transmission,
     glm: {
       configured: glmConfigured,
-      available: glmConfigured && transmission === 'allowed',
+      available: glmAvailable,
       model: process.env.GLM_MODEL?.trim() || 'glm-5.3-flash',
     },
     openai: {

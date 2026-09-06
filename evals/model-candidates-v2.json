@@ -1,6 +1,6 @@
 {
   "version": "model-candidates-v2.0",
-  "status": "PENDING_HUMAN_REVIEW_AND_TRANSMISSION_AUTHORIZATION",
+  "status": "AUTHORIZED_FOR_AUTOMATIC_GLM_EVALUATION",
   "provenance": "Locally authored synthetic variants; not real complaints, not an independently labeled benchmark.",
   "cases": [
     {

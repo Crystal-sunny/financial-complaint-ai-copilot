@@ -1,12 +1,20 @@
 import type { ProviderMode } from '../domain';
 
-// Owner explicitly authorized these three synthetic cases for GLM investigation
-// and verification on 2026-09-04. This does not authorize other providers/cases.
+// Standing authorization: on 2026-09-05 the owner authorized automatic GLM use
+// for AI work on registered synthetic/desensitized project cases. Registration
+// remains a technical data-boundary; it is not delegated to client requests.
 const authorizedCaseIds = new Set([
   'CMP-2026-09001',
   'CMP-2026-09002',
   'CMP-2026-09003',
 ]);
+
+function isRegisteredSyntheticCase(caseId: string) {
+  return (
+    authorizedCaseIds.has(caseId) ||
+    /^EVAL-V2-(?:00[1-9]|01[0-2])$/.test(caseId)
+  );
+}
 
 export function getCaseDataTransmissionStatus(): 'allowed' | 'paused' {
   // Operational kill switch can restrict consent, never expand its scope.
@@ -29,7 +37,7 @@ export function assertInvestigationProviderAllowed(
   if (provider === 'recorded') return;
   if (
     provider !== 'glm' ||
-    !authorizedCaseIds.has(caseId) ||
+    !isRegisteredSyntheticCase(caseId) ||
     getCaseDataTransmissionStatus() === 'paused'
   )
     throw new CaseDataTransmissionPausedError();

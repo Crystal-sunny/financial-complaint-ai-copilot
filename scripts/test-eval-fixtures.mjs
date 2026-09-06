@@ -24,10 +24,7 @@ const text = await readFile(
 const dataset = JSON.parse(text);
 assert.equal(dataset.cases.length, 12);
 assert.equal(new Set(dataset.cases.map((item) => item.id)).size, 12);
-assert.equal(
-  dataset.status,
-  'PENDING_HUMAN_REVIEW_AND_TRANSMISSION_AUTHORIZATION',
-);
+assert.equal(dataset.status, 'AUTHORIZED_FOR_AUTOMATIC_GLM_EVALUATION');
 const original = JSON.stringify(mockDatabase);
 for (const sample of dataset.cases) {
   const prepared = prepareCandidate(sample);
@@ -35,6 +32,7 @@ for (const sample of dataset.cases) {
     'caseId',
     'channel',
     'customerId',
+    'customerRequests',
     'loanId',
     'rawText',
     'receivedAt',
@@ -45,19 +43,21 @@ for (const sample of dataset.cases) {
       sample.expected.reviewChecks.length,
   );
   assert.equal(Object.hasOwn(prepared, 'expected'), false);
-  assert.throws(
-    () => assertInvestigationProviderAllowed('glm', prepared.case.caseId),
-    { code: 'CASE_DATA_TRANSMISSION_PAUSED' },
+  assert.doesNotThrow(() =>
+    assertInvestigationProviderAllowed('glm', prepared.case.caseId),
   );
   const again = prepareCandidate(sample);
   assert.deepEqual(prepared, again);
   prepared.database.transactions.length = 0;
   assert.ok(again.database.transactions.length > 0);
 }
+assert.throws(() => assertInvestigationProviderAllowed('glm', 'EVAL-V3-001'), {
+  code: 'CASE_DATA_TRANSMISSION_PAUSED',
+});
 assert.equal(JSON.stringify(mockDatabase), original);
 let passed = 1;
 console.log(
-  'PASS 12 candidate fixtures have valid patches, isolated data, separate expectations and no external authorization',
+  'PASS 12 candidate fixtures are isolated, expectation-free model inputs and authorized only for GLM evaluation',
 );
 function test(name, fn) {
   fn();

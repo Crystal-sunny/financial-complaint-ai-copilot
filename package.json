@@ -9,6 +9,7 @@
     "dev": "vinext dev",
     "build": "vinext build",
     "eval": "node scripts/run-guardrail-evals.mjs",
+    "eval:model-candidates": "node --env-file=.env.local scripts/verify-model-candidates.mjs",
     "eval:legacy": "node scripts/run-evals.mjs",
     "test:offline": "node scripts/test-glm-provider.mjs && node scripts/test-case-data-policy.mjs && node scripts/test-glm-pipeline.mjs && node scripts/test-eval-fixtures.mjs",
     "typecheck": "tsc --noEmit --incremental false",

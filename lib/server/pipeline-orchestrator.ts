@@ -1,8 +1,8 @@
 import type {
   Evidence,
+  InvestigationCase,
   InvestigationEvent,
   InvestigationResult,
-  MockCase,
   ProviderMode,
   ToolName,
 } from '../domain';
@@ -47,6 +47,8 @@ type PipelineOptions = {
   provider?: ProviderMode;
   signal?: AbortSignal;
   onEvent?: (event: InvestigationEvent) => void;
+  database?: typeof mockDatabase;
+  forcedToolErrors?: ReadonlySet<ToolName>;
 };
 
 type ToolRun = {
@@ -82,7 +84,7 @@ const requiredToolsByType: Record<string, ToolName[]> = {
   other: ['get_customer_profile', 'get_support_tickets', 'search_rules'],
 };
 
-function deterministicSafetyResult(caseItem: MockCase) {
+function deterministicSafetyResult(caseItem: InvestigationCase) {
   const securityLanguage =
     /非本人|不是我|陌生消费|新设备|异地登录|登录不上|盗刷|账户.*接管/.test(
       caseItem.rawText,
@@ -97,7 +99,7 @@ function deterministicSafetyResult(caseItem: MockCase) {
 }
 
 function callArguments(
-  caseItem: MockCase,
+  caseItem: InvestigationCase,
   tool: ToolName,
   businessType: CoordinatorOutput['complaintType'],
 ) {
@@ -132,7 +134,10 @@ function callArguments(
   }
 }
 
-function buildToolPlan(caseItem: MockCase, coordinator: CoordinatorOutput) {
+function buildToolPlan(
+  caseItem: InvestigationCase,
+  coordinator: CoordinatorOutput,
+) {
   const planned = coordinator.investigationPlan.map((item) => item.tool);
   const required = requiredToolsByType[coordinator.complaintType] ?? [];
   const tools = [...new Set([...planned, ...required])].filter((tool) => {
@@ -165,12 +170,15 @@ function collectRecordIds(value: unknown, ids = new Set<string>()) {
   return ids;
 }
 
-function validContext(toolRuns?: ToolRun[]) {
+function validContext(
+  toolRuns?: ToolRun[],
+  database: typeof mockDatabase = mockDatabase,
+) {
   const sourceIds = toolRuns
     ? collectRecordIds(toolRuns.map((item) => item.response.data))
-    : collectRecordIds(mockDatabase);
+    : collectRecordIds(database);
   const ruleIds = new Set(
-    mockDatabase.rules
+    database.rules
       .map((item) => item.ruleId)
       .filter((ruleId) =>
         toolRuns
@@ -212,6 +220,7 @@ function titleForEvidence(item: InvestigatorOutput['evidence'][number]) {
 function amountFromEvidence(
   disposition: DispositionOutput,
   investigator: InvestigatorOutput,
+  database: typeof mockDatabase = mockDatabase,
 ) {
   if (
     !['PROPOSE_REFUND', 'WAIT_FOR_REVERSAL'].includes(
@@ -228,7 +237,7 @@ function amountFromEvidence(
       .map((item) => item.sourceRecordId),
   );
   const amounts = new Set(
-    mockDatabase.transactions
+    database.transactions
       .filter(
         (item) =>
           citedSources.has(item.transactionId) &&
@@ -248,8 +257,9 @@ function assertModelReferences(
   investigator: InvestigatorOutput,
   disposition: DispositionOutput,
   toolRuns: ToolRun[],
+  database: typeof mockDatabase = mockDatabase,
 ) {
-  const context = validContext(toolRuns);
+  const context = validContext(toolRuns, database);
   const evidenceIds = new Set(
     investigator.evidence.map((item) => item.evidenceId),
   );
@@ -300,12 +310,13 @@ function assertModelReferences(
 }
 
 function mapModelResult(
-  caseItem: MockCase,
+  caseItem: InvestigationCase,
   coordinator: CoordinatorOutput,
   investigator: InvestigatorOutput,
   disposition: DispositionOutput,
   toolRuns: ToolRun[],
   providerMode: Exclude<ProviderMode, 'recorded'>,
+  database: typeof mockDatabase = mockDatabase,
 ): InvestigationPayload {
   const evidence: Evidence[] = investigator.evidence.map((item) => ({
     ...item,
@@ -350,7 +361,7 @@ function mapModelResult(
     evidenceGate: investigator.evidenceGate.status,
     recommendation: {
       ...disposition.recommendation,
-      amount: amountFromEvidence(disposition, investigator),
+      amount: amountFromEvidence(disposition, investigator, database),
     },
     approval: {
       level: disposition.approvalRequirement.level,
@@ -375,10 +386,11 @@ function mapModelResult(
 }
 
 async function investigateWithModel(
-  caseItem: MockCase,
+  caseItem: InvestigationCase,
   providerMode: Exclude<ProviderMode, 'recorded'>,
   options: PipelineOptions,
 ) {
+  const database = options.database ?? mockDatabase;
   const provider = createModelProvider(providerMode);
   const safety = deterministicSafetyResult(caseItem);
   const calls: ModelCallMetadata[] = [];
@@ -429,13 +441,20 @@ async function investigateWithModel(
   const toolPlan = buildToolPlan(caseItem, coordinatorCall.output);
   const toolRuns = toolPlan.map((name) => {
     const startedAt = performance.now();
-    const response = runReadOnlyTool(
-      name,
-      callArguments(caseItem, name, coordinatorCall.output.complaintType),
-      name === 'get_customer_profile'
-        ? 'case_coordinator'
-        : 'fact_rule_investigator',
-    );
+    const response = options.forcedToolErrors?.has(name)
+      ? {
+          status: 'ERROR' as const,
+          data: null,
+          error: '评测注入的只读工具故障。',
+        }
+      : runReadOnlyTool(
+          name,
+          callArguments(caseItem, name, coordinatorCall.output.complaintType),
+          name === 'get_customer_profile'
+            ? 'case_coordinator'
+            : 'fact_rule_investigator',
+          database,
+        );
     return {
       name,
       response,
@@ -458,9 +477,11 @@ async function investigateWithModel(
           ? paymentRecordSemantics
           : undefined,
         allowedSourceRecordIds: Array.from(
-          validContext(toolRuns).validSourceRecordIds,
+          validContext(toolRuns, database).validSourceRecordIds,
         ),
-        allowedRuleIds: Array.from(validContext(toolRuns).validRuleIds),
+        allowedRuleIds: Array.from(
+          validContext(toolRuns, database).validRuleIds,
+        ),
       },
       schemaName: 'fact_rule_investigator_output',
       schema: investigatorSchema,
@@ -495,6 +516,7 @@ async function investigateWithModel(
     investigatorCall.output,
     dispositionCall.output,
     toolRuns,
+    database,
   );
 
   const requiredApprovalFields =
@@ -514,6 +536,7 @@ async function investigateWithModel(
       dispositionCall.output,
       toolRuns,
       providerMode,
+      database,
     ),
     toolRuns,
     model: calls.at(-1)?.model ?? provider.model,
@@ -524,18 +547,19 @@ async function investigateWithModel(
 function withExecution(
   result: InvestigationPayload,
   options: {
-    caseItem: MockCase;
+    caseItem: InvestigationCase;
     requestedProvider: ProviderMode;
     actualProvider: ProviderMode;
     model: string | null;
     fallbackReason?: string;
     modelCalls?: ModelCallMetadata[];
     toolRuns?: ToolRun[];
+    database?: typeof mockDatabase;
   },
 ): InvestigationResult {
   const validationChecks = validateInvestigation(
     result,
-    validContext(options.toolRuns),
+    validContext(options.toolRuns, options.database),
   );
   return {
     ...result,
@@ -582,6 +606,7 @@ export async function investigateCase(
         model: modelRun.model,
         modelCalls: modelRun.modelCalls,
         toolRuns: modelRun.toolRuns,
+        database: options.database,
       });
     } catch (error) {
       options.signal?.throwIfAborted();
@@ -611,5 +636,30 @@ export async function investigateCase(
     requestedProvider,
     actualProvider: 'recorded',
     model: null,
+  });
+}
+
+// Server-internal evaluation entrypoint. It has no route and no recorded
+// fallback, so a failed model run cannot be mistaken for a successful answer.
+export async function investigateSyntheticCaseForEvaluation(
+  caseItem: InvestigationCase,
+  database: typeof mockDatabase,
+  forcedToolErrors: readonly ToolName[] = [],
+  options: Pick<PipelineOptions, 'signal' | 'onEvent'> = {},
+) {
+  assertInvestigationProviderAllowed('glm', caseItem.caseId);
+  const modelRun = await investigateWithModel(caseItem, 'glm', {
+    ...options,
+    database,
+    forcedToolErrors: new Set(forcedToolErrors),
+  });
+  return withExecution(modelRun.result, {
+    caseItem,
+    requestedProvider: 'glm',
+    actualProvider: 'glm',
+    model: modelRun.model,
+    modelCalls: modelRun.modelCalls,
+    toolRuns: modelRun.toolRuns,
+    database,
   });
 }

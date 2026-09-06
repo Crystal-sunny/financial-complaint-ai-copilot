@@ -4,17 +4,20 @@ export type CaseType =
   | 'suspected_fraud'
   | 'other';
 
-export type MockCase = {
+export type InvestigationCase = {
   caseId: string;
   customerId: string;
   loanId: string | null;
   channel: string;
   receivedAt: string;
   rawText: string;
+  customerRequests: string[];
+};
+
+export type MockCase = InvestigationCase & {
   status: 'PENDING_INVESTIGATION';
   expectedType: CaseType;
   expectedRiskLevel: 'MEDIUM' | 'HIGH';
-  customerRequests: string[];
 };
 
 export type ToolName =

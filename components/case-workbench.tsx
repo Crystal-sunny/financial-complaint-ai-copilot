@@ -292,7 +292,10 @@ export function CaseWorkbench() {
         return response.json() as Promise<RuntimeCapabilities>;
       })
       .then((capabilities) => {
-        if (active) setRuntime(capabilities);
+        if (active) {
+          setRuntime(capabilities);
+          setProviderMode(capabilities.defaultProvider);
+        }
       })
       .catch(() => undefined);
     return () => {

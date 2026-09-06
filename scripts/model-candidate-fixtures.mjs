@@ -23,6 +23,7 @@ export function prepareCandidate(sample) {
     receivedAt: base.receivedAt,
     channel: base.channel,
     rawText: sample.rawText,
+    customerRequests: [sample.rawText],
   };
   assert.ok(context.rawText.trim());
   for (const [key, value] of Object.entries(sample.casePatch ?? {})) {
