@@ -18,5 +18,11 @@
       "batch": "holdout-4",
       "report": "glm-candidates-v5-holdout-4-1788648529272.json"
     }
+  ],
+  "regressions": [
+    {
+      "batch": "regression-1",
+      "report": "glm-candidates-v5-regression-1-1788650730365.json"
+    }
   ]
 }
