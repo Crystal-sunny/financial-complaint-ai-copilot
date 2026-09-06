@@ -1,8 +1,9 @@
 import type { ProviderMode } from '../domain';
 
 // Standing authorization: on 2026-09-05 the owner authorized automatic GLM use
-// for AI work on registered synthetic/desensitized project cases. Registration
-// remains a technical data-boundary; it is not delegated to client requests.
+// for AI work on registered synthetic/desensitized project cases, and later
+// explicitly confirmed the frozen EVAL-V4 set. Registration remains a technical
+// data-boundary; it is not delegated to client requests.
 const authorizedCaseIds = new Set([
   'CMP-2026-09001',
   'CMP-2026-09002',
@@ -12,7 +13,7 @@ const authorizedCaseIds = new Set([
 function isRegisteredSyntheticCase(caseId: string) {
   return (
     authorizedCaseIds.has(caseId) ||
-    /^EVAL-V(?:2|3)-(?:00[1-9]|01[0-2])$/.test(caseId)
+    /^EVAL-V(?:2|3|4)-(?:00[1-9]|01[0-2])$/.test(caseId)
   );
 }
 

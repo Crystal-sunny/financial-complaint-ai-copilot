@@ -79,15 +79,9 @@ for (const sample of [...dataset.cases, ...holdout.cases, ...v4.cases]) {
       sample.expected.reviewChecks.length,
   );
   assert.equal(Object.hasOwn(prepared, 'expected'), false);
-  if (sample.id.startsWith('EVAL-V4-'))
-    assert.throws(
-      () => assertInvestigationProviderAllowed('glm', prepared.case.caseId),
-      { code: 'CASE_DATA_TRANSMISSION_PAUSED' },
-    );
-  else
-    assert.doesNotThrow(() =>
-      assertInvestigationProviderAllowed('glm', prepared.case.caseId),
-    );
+  assert.doesNotThrow(() =>
+    assertInvestigationProviderAllowed('glm', prepared.case.caseId),
+  );
   const again = prepareCandidate(sample);
   assert.deepEqual(prepared, again);
   prepared.database.transactions.length = 0;
@@ -99,7 +93,7 @@ assert.throws(() => assertInvestigationProviderAllowed('glm', 'EVAL-V5-001'), {
 assert.equal(JSON.stringify(mockDatabase), original);
 let passed = 1;
 console.log(
-  'PASS 36 candidate fixtures are isolated and expectation-free; V4 remains blocked from transmission',
+  'PASS 36 candidate fixtures are isolated, expectation-free and registered only for GLM evaluation',
 );
 function test(name, fn) {
   fn();
