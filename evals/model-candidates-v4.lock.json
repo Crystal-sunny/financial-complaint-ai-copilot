@@ -7,5 +7,10 @@
     "holdout-2": ["EVAL-V4-002", "EVAL-V4-006", "EVAL-V4-010"],
     "holdout-3": ["EVAL-V4-003", "EVAL-V4-007", "EVAL-V4-011"],
     "holdout-4": ["EVAL-V4-004", "EVAL-V4-008", "EVAL-V4-012"]
+  },
+  "regressionBatches": {
+    "regression-1": ["EVAL-V4-002", "EVAL-V4-003", "EVAL-V4-006"],
+    "regression-2": ["EVAL-V4-007", "EVAL-V4-008", "EVAL-V4-009"],
+    "regression-3": ["EVAL-V4-012"]
   }
 }

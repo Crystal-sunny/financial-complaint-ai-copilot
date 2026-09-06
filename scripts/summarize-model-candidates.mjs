@@ -1,18 +1,27 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 
+const suite = process.argv[2] ?? 'v2';
+assert.match(suite, /^v[24]$/);
 const appEvalDirectory = new URL('../evals/', import.meta.url);
 const reportDirectory = new URL('../../evals/results/', import.meta.url);
 const manifest = JSON.parse(
   await readFile(
-    new URL('model-evaluation-runs-v2.json', appEvalDirectory),
+    new URL(`model-evaluation-runs-${suite}.json`, appEvalDirectory),
     'utf8',
   ),
 );
-const dataset = JSON.parse(
-  await readFile(new URL('model-candidates-v2.json', appEvalDirectory), 'utf8'),
+const datasetText = await readFile(
+  new URL(`model-candidates-${suite}.json`, appEvalDirectory),
+  'utf8',
 );
+const dataset = JSON.parse(datasetText);
 assert.equal(manifest.datasetVersion, dataset.version);
+assert.equal(
+  manifest.datasetSha256,
+  createHash('sha256').update(datasetText).digest('hex'),
+);
 
 async function loadReports(entries) {
   return Promise.all(
@@ -79,7 +88,7 @@ function outcome(run, batch) {
 }
 
 const baselineReports = await loadReports(manifest.baseline);
-const regressionReports = await loadReports(manifest.regressions);
+const regressionReports = await loadReports(manifest.regressions ?? []);
 const baselineOutcomes = baselineReports.flatMap((entry) =>
   entry.report.runs.map((run) => outcome(run, entry.batch)),
 );
@@ -100,11 +109,11 @@ const latestOutcomes = dataset.cases.map((sample) => {
 const baseline = metrics(baselineReports);
 const regressions = metrics(regressionReports);
 const scorecard = {
-  version: 'model-candidates-v2-scorecard-1',
+  version: `model-candidates-${suite}-development-scorecard-1`,
   generatedAt: new Date().toISOString(),
   datasetVersion: manifest.datasetVersion,
   datasetSha256: manifest.datasetSha256,
-  model: 'glm-5.3-flash',
+  model: baselineReports[0].report.model,
   baseline: {
     ...baseline,
     validatedRate: baseline.completed / baseline.candidateRuns,
@@ -136,7 +145,7 @@ const scorecard = {
 };
 
 const baselinePercent = (scorecard.baseline.machinePassRate * 100).toFixed(1);
-const markdown = `# GLM 模型候选评测计分卡
+const markdown = `# GLM ${suite.toUpperCase()} 模型候选评测计分卡
 
 - 数据集：${scorecard.datasetVersion}
 - 模型：${scorecard.model}
@@ -168,19 +177,20 @@ ${latestOutcomes
   )
   .join('\n')}
 
-> 最新 12/12 来自针对失败样本的开发回归，只能证明这些回归在本次运行通过，不能替代独立盲测或稳定性统计。失败运行未返回的 Token 元数据不计入 Token 合计。
+> 最新结果包含针对失败样本的开发回归，只能证明这些回归在本次运行的表现，不能替代独立盲测或稳定性统计。失败运行未返回的 Token 元数据不计入 Token 合计。
 `;
 
+const outputBase =
+  suite === 'v2'
+    ? 'model-candidates-v2-scorecard'
+    : `model-candidates-${suite}-development-scorecard`;
+
 await writeFile(
-  new URL('model-candidates-v2-scorecard.json', reportDirectory),
+  new URL(`${outputBase}.json`, reportDirectory),
   `${JSON.stringify(scorecard, null, 2)}\n`,
   'utf8',
 );
-await writeFile(
-  new URL('model-candidates-v2-scorecard.md', reportDirectory),
-  markdown,
-  'utf8',
-);
+await writeFile(new URL(`${outputBase}.md`, reportDirectory), markdown, 'utf8');
 console.log(
   JSON.stringify({
     baseline: {

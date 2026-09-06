@@ -85,17 +85,86 @@ const requiredToolsByType: Record<string, ToolName[]> = {
 };
 
 function deterministicSafetyResult(caseItem: InvestigationCase) {
-  const securityLanguage =
-    /非本人|不是我|陌生消费|新设备|异地登录|登录不上|盗刷|账户.*接管|我.*没有.*(?:进行|操作|消费)|没(?:有)?[^，。]{0,20}(?:点过|付过|买过|操作过|授权过|消费过)|没让.*(?:别人|他人).*(?:操作|进行)|从未.*(?:操作|授权)/.test(
-      caseItem.rawText,
+  const caseLanguage = [caseItem.rawText, ...caseItem.customerRequests].join(
+    ' ',
+  );
+  const ownershipInquiryOnly =
+    /(?:确认|核实|查|查看|看看)[^，。；！？]{0,24}(?:是不是|是否)(?:属于)?(?:我|本人)(?:的)?/.test(
+      caseLanguage,
+    ) &&
+    !/(?:^|[^是])不是我|未经(?:我|本人)?授权|未获(?:我|本人)?授权|非本人|陌生消费|新设备|异地登录|登录不上|盗刷|账户.*接管/.test(
+      caseLanguage,
     );
-  const mandatoryEscalation = securityLanguage;
+  const securityLanguage =
+    /非本人|(?:^|[^是])不是我|未经(?:我|本人)?授权|未获(?:我|本人)?授权|陌生消费|新设备|异地登录|登录不上|盗刷|账户.*接管|我.*没有.*(?:进行|操作|消费)|没(?:有)?[^，。]{0,20}(?:点过|付过|买过|操作过|授权过|消费过)|没让.*(?:别人|他人).*(?:操作|进行)|从未.*(?:操作|授权)/.test(
+      caseLanguage,
+    );
+  const mandatoryEscalation = securityLanguage && !ownershipInquiryOnly;
   return {
     mandatoryEscalation,
+    ownershipInquiryOnly,
     reason: mandatoryEscalation
       ? '客户否认授权或存在账户接管风险线索，应用层强制升级。'
-      : '未命中必须升级的账户安全硬规则。',
+      : ownershipInquiryOnly
+        ? '客户仅询问记录是否属于本人，未明确否认授权，不触发强制安全升级。'
+        : '未命中必须升级的账户安全硬规则。',
   };
+}
+
+function deterministicComplaintType(
+  caseItem: InvestigationCase,
+  safety: ReturnType<typeof deterministicSafetyResult>,
+): CoordinatorOutput['complaintType'] | null {
+  if (safety.mandatoryEscalation) return 'suspected_fraud';
+  const caseLanguage = [caseItem.rawText, ...caseItem.customerRequests].join(
+    ' ',
+  );
+  if (
+    /重复(?:支付|付款|扣款)|(?:两|2)(?:次|笔)[^，。；！？]{0,24}(?:支付|付款|扣款)|(?:支付|付款|扣款)[^，。；！？]{0,24}(?:两|2)(?:次|笔)|冲正/.test(
+      caseLanguage,
+    )
+  )
+    return 'duplicate_debit';
+  if (
+    caseItem.loanId &&
+    /提前(?:还款|结清)|结清|应收|贷款|还款|扣款/.test(caseLanguage)
+  )
+    return 'early_repayment_debit';
+  return null;
+}
+
+function enforceInvestigationGate(
+  coordinator: CoordinatorOutput,
+  investigator: InvestigatorOutput,
+  safety: ReturnType<typeof deterministicSafetyResult>,
+  availableRuleIds: Set<string>,
+) {
+  if (safety.mandatoryEscalation || coordinator.mandatoryEscalation) {
+    investigator.evidenceGate.status = 'MANDATORY_ESCALATION';
+    investigator.evidenceGate.reason = safety.mandatoryEscalation
+      ? safety.reason
+      : '案件协调阶段识别到明确安全风险，必须升级安全团队。';
+    return;
+  }
+  const requiredRules =
+    coordinator.complaintType === 'early_repayment_debit'
+      ? ['RULE-PAY-004', 'RULE-APPROVAL-002']
+      : coordinator.complaintType === 'duplicate_debit'
+        ? ['RULE-PAY-005']
+        : [];
+  const missingRules = requiredRules.filter(
+    (ruleId) => !availableRuleIds.has(ruleId),
+  );
+  if (!missingRules.length) return;
+  investigator.evidenceGate.status = 'INSUFFICIENT';
+  investigator.evidenceGate.reason = `处置所需规则未完整检索：${missingRules.join('、')}。`;
+  const field = `rules:${missingRules.join(',')}`;
+  if (!investigator.missingInformation.some((item) => item.field === field))
+    investigator.missingInformation.push({
+      field,
+      reason: '缺少受理时点有效的动作授权或审批规则。',
+      nextAction: '补查当前有效规则后再形成资金处置建议。',
+    });
 }
 
 function callArguments(
@@ -418,6 +487,7 @@ async function investigateWithModel(
   const caseContext = {
     caseId: caseItem.caseId,
     rawText: caseItem.rawText,
+    customerRequests: caseItem.customerRequests,
     customerId: caseItem.customerId,
     loanId: caseItem.loanId,
     channel: caseItem.channel,
@@ -452,10 +522,15 @@ async function investigateWithModel(
   assertCoordinatorOutput(coordinatorCall.output);
   calls.push(coordinatorCall.metadata);
 
+  const routedComplaintType = deterministicComplaintType(caseItem, safety);
+  if (routedComplaintType)
+    coordinatorCall.output.complaintType = routedComplaintType;
   if (safety.mandatoryEscalation) {
     coordinatorCall.output.mandatoryEscalation = true;
     coordinatorCall.output.riskLevel = 'HIGH';
     coordinatorCall.output.complaintType = 'suspected_fraud';
+  } else if (safety.ownershipInquiryOnly) {
+    coordinatorCall.output.mandatoryEscalation = false;
   }
 
   startStage('fact_rule_investigator');
@@ -510,10 +585,12 @@ async function investigateWithModel(
     });
   assertInvestigatorOutput(investigatorCall.output);
   calls.push(investigatorCall.metadata);
-  if (safety.mandatoryEscalation) {
-    investigatorCall.output.evidenceGate.status = 'MANDATORY_ESCALATION';
-    investigatorCall.output.evidenceGate.reason = safety.reason;
-  }
+  enforceInvestigationGate(
+    coordinatorCall.output,
+    investigatorCall.output,
+    safety,
+    validContext(caseItem, toolRuns, database).validRuleIds,
+  );
 
   startStage('disposition_compliance');
   const dispositionCall = await provider.generateStructured<DispositionOutput>({

@@ -124,6 +124,11 @@ function stub(caseItem, mutate = (value) => value) {
         !inputText.includes('expectedRiskLevel'),
     );
     assert.ok(!inputText.includes('offline-only-key'));
+    if (calls === 0) {
+      const input = JSON.parse(inputText);
+      assert.ok(Array.isArray(input.customerRequests));
+      assert.ok(input.customerRequests.length > 0);
+    }
     if (calls === 1) {
       const input = JSON.parse(inputText);
       assert.ok(
@@ -217,6 +222,98 @@ await test('colloquial payment denial also triggers deterministic security escal
   assert.equal(result.coordinator.mandatoryEscalation, true);
   assert.equal(result.evidenceGate, 'MANDATORY_ESCALATION');
   assert.equal(result.recommendation.actionCode, 'ESCALATE_SECURITY');
+});
+await test('ownership question is not treated as an explicit transaction denial', async () => {
+  const base = mockDatabase.cases[1];
+  const caseItem = {
+    ...base,
+    caseId: 'EVAL-V4-003',
+    rawText:
+      '两次付款都成功了，但请先确认系统里的冲正是不是我的，不要拿别人的记录来处理。',
+    customerRequests: ['确认系统里的冲正是不是我的。'],
+  };
+  const calls = stub(base);
+  const result = await investigateSyntheticCaseForEvaluation(
+    caseItem,
+    structuredClone(mockDatabase),
+  );
+  assert.equal(calls(), 3);
+  assert.equal(result.coordinator.mandatoryEscalation, false);
+  assert.equal(result.coordinator.complaintType, 'duplicate_debit');
+  assert.equal(result.recommendation.actionCode, 'WAIT_FOR_REVERSAL');
+});
+await test('explicit unauthorized wording triggers deterministic security escalation', async () => {
+  const base = mockDatabase.cases[2];
+  const caseItem = {
+    ...base,
+    caseId: 'EVAL-V4-009',
+    rawText: '凌晨三笔交易都未经我授权，还有陌生设备，请先转安全团队。',
+    customerRequests: ['转安全团队核验。'],
+  };
+  const calls = stub(base);
+  const result = await investigateSyntheticCaseForEvaluation(
+    caseItem,
+    structuredClone(mockDatabase),
+  );
+  assert.equal(calls(), 3);
+  assert.equal(result.coordinator.mandatoryEscalation, true);
+  assert.equal(result.evidenceGate, 'MANDATORY_ESCALATION');
+});
+await test('application routing corrects a model misclassification before rule lookup', async () => {
+  const base = mockDatabase.cases[0];
+  const caseItem = {
+    ...base,
+    caseId: 'EVAL-V4-008',
+    rawText:
+      '扣款最开始显示超时，后来状态更新成最终成功，金额1248.36元，请按最终状态核实。',
+    customerRequests: ['按最终状态核实该笔扣款。'],
+  };
+  const calls = stub(base, (value, index) => {
+    if (index === 0) value.complaintType = 'other';
+    return value;
+  });
+  const result = await investigateSyntheticCaseForEvaluation(
+    caseItem,
+    structuredClone(mockDatabase),
+  );
+  assert.equal(calls(), 3);
+  assert.equal(result.coordinator.complaintType, 'early_repayment_debit');
+  assert.ok(
+    result.toolTraces.some(
+      (trace) => trace.name === 'search_rules' && trace.status === 'OK',
+    ),
+  );
+  assert.equal(result.recommendation.actionCode, 'PROPOSE_REFUND');
+});
+await test('missing approval rule forces an insufficient gate before disposition', async () => {
+  const base = mockDatabase.cases[0];
+  const database = structuredClone(mockDatabase);
+  database.rules.find(
+    (item) => item.ruleId === 'RULE-APPROVAL-002',
+  ).effectiveTo = '2026-08-14';
+  const calls = stub(base, (value, index) => {
+    if (index === 2) {
+      value.recommendation.actionCode = 'MANUAL_REVIEW';
+      value.recommendation.state = 'NEEDS_INFORMATION';
+      value.recommendation.ruleIds = ['RULE-PAY-004'];
+      value.approvalRequirement.level = 'CASE_SPECIALIST';
+    }
+    return value;
+  });
+  const result = await investigateSyntheticCaseForEvaluation(
+    {
+      ...base,
+      caseId: 'EVAL-V4-006',
+      customerRequests: ['确认当前有效的退款审批要求。'],
+    },
+    database,
+  );
+  assert.equal(calls(), 3);
+  assert.equal(result.evidenceGate, 'INSUFFICIENT');
+  assert.ok(
+    result.recommendation.actionCode === 'MANUAL_REVIEW' &&
+      result.conflict.status === 'UNRESOLVED',
+  );
 });
 await test('insufficient evidence without a conflict remains visibly unresolved', async () => {
   stub(mockDatabase.cases[0], (value, index) => {
