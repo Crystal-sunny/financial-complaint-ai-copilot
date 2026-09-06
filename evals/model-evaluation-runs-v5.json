@@ -1,0 +1,22 @@
+{
+  "datasetVersion": "model-candidates-v5.0",
+  "datasetSha256": "ca32b84bbc58d62c09826e0b84160fa63e8736770353981527e83503998d0566",
+  "baseline": [
+    {
+      "batch": "holdout-1",
+      "report": "glm-candidates-v5-holdout-1-1788648030768.json"
+    },
+    {
+      "batch": "holdout-2",
+      "report": "glm-candidates-v5-holdout-2-1788648208316.json"
+    },
+    {
+      "batch": "holdout-3",
+      "report": "glm-candidates-v5-holdout-3-1788648342265.json"
+    },
+    {
+      "batch": "holdout-4",
+      "report": "glm-candidates-v5-holdout-4-1788648529272.json"
+    }
+  ]
+}
