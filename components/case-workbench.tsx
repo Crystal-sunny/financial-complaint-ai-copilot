@@ -83,6 +83,25 @@ type CaseView = {
   requests: string[];
 };
 
+type WebMCPTool = {
+  name: string;
+  title: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+  annotations: {
+    readOnlyHint: boolean;
+    untrustedContentHint: boolean;
+  };
+  execute: (input: unknown) => Promise<Record<string, string>>;
+};
+
+type WebMCPContext = {
+  registerTool: (
+    tool: WebMCPTool,
+    options: { signal: AbortSignal },
+  ) => void | Promise<void>;
+};
+
 const cases: CaseView[] = [
   {
     id: 'CMP-2026-09001',
@@ -308,6 +327,65 @@ export function CaseWorkbench() {
     setCopied(false);
     setTodayOpen(false);
   }
+
+  useEffect(() => {
+    const context = (
+      document as Document & { modelContext?: WebMCPContext }
+    ).modelContext;
+    if (!context?.registerTool) return;
+
+    const lifecycle = new AbortController();
+    const allowedCaseIds = cases.map((item) => item.id);
+    void Promise.resolve(
+      context.registerTool(
+        {
+          name: 'select_financial_complaint_demo_case',
+          title: '切换演示案件',
+          description:
+            '切换到一个合成金融客诉演示案件，并返回案件概览。仅改变当前页面选择，不会运行调查、提交审批或执行任何资金操作。',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              caseId: { type: 'string', enum: allowedCaseIds },
+            },
+            required: ['caseId'],
+            additionalProperties: false,
+          },
+          annotations: {
+            readOnlyHint: true,
+            untrustedContentHint: false,
+          },
+          async execute(input) {
+            const caseId =
+              input &&
+              typeof input === 'object' &&
+              typeof (input as { caseId?: unknown }).caseId === 'string'
+                ? (input as { caseId: string }).caseId
+                : null;
+            const caseItem = cases.find((item) => item.id === caseId);
+            if (!caseItem)
+              throw new Error('CASE_ID_NOT_ALLOWED_FOR_DEMO');
+
+            selectCase(caseItem.id);
+            await new Promise<void>((resolve) =>
+              requestAnimationFrame(() =>
+                requestAnimationFrame(() => resolve()),
+              ),
+            );
+            return {
+              caseId: caseItem.id,
+              title: caseItem.title,
+              risk: caseItem.risk,
+              status: 'selected',
+            };
+          },
+        },
+        { signal: lifecycle.signal },
+      ),
+    ).catch(() => undefined);
+
+    return () => lifecycle.abort();
+  }, []);
 
   async function runInvestigation() {
     if (runningCaseId) return;
