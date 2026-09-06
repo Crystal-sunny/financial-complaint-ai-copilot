@@ -1,6 +1,6 @@
 import type { ProviderMode, RuntimeCapabilities } from '../domain';
-import { caseDataTransmissionStatus } from './case-data-policy';
-import { assertSchema } from './schema-validator';
+import { getCaseDataTransmissionStatus } from './case-data-policy';
+import { assertSchema, SchemaValidationError } from './schema-validator';
 
 type JsonSchema = Record<string, unknown>;
 
@@ -65,12 +65,15 @@ function runtimeConfig() {
 
 export function getRuntimeCapabilities(): RuntimeCapabilities {
   const config = runtimeConfig();
+  const transmission = getCaseDataTransmissionStatus();
+  const glmConfigured =
+    Boolean(process.env.GLM_API_KEY?.trim()) && validGlmBaseURL();
   return {
     defaultProvider: 'recorded',
-    caseDataTransmission: caseDataTransmissionStatus,
+    caseDataTransmission: transmission,
     glm: {
-      configured: Boolean(process.env.GLM_API_KEY?.trim()) && validGlmBaseURL(),
-      available: false,
+      configured: glmConfigured,
+      available: glmConfigured && transmission === 'allowed',
       model: process.env.GLM_MODEL?.trim() || 'glm-5.3-flash',
     },
     openai: {
@@ -102,7 +105,10 @@ const safeErrors = {
 } as const;
 
 export class ModelProviderError extends Error {
-  constructor(readonly code: keyof typeof safeErrors) {
+  constructor(
+    readonly code: keyof typeof safeErrors,
+    readonly diagnostic?: string,
+  ) {
     super(safeErrors[code]);
     this.name = 'ModelProviderError';
   }
@@ -112,6 +118,24 @@ function tokenCount(value: unknown): number | null {
   return typeof value === 'number' && Number.isInteger(value) && value >= 0
     ? value
     : null;
+}
+
+function requiredFieldChecklist(schema: JsonSchema, path = '$'): string[] {
+  if (
+    schema.type === 'array' &&
+    schema.items &&
+    typeof schema.items === 'object'
+  )
+    return requiredFieldChecklist(schema.items as JsonSchema, `${path}[]`);
+  if (schema.type !== 'object') return [];
+  const required = Array.isArray(schema.required) ? schema.required : [];
+  const properties = (schema.properties ?? {}) as Record<string, JsonSchema>;
+  return [
+    `${path} 必须且只能包含字段：${required.join('、')}`,
+    ...Object.entries(properties).flatMap(([key, value]) =>
+      requiredFieldChecklist(value, `${path}.${key}`),
+    ),
+  ];
 }
 
 export class GLMModelProvider implements ModelProvider {
@@ -147,7 +171,7 @@ export class GLMModelProvider implements ModelProvider {
           messages: [
             {
               role: 'system',
-              content: `${request.instructions}\n只返回一个 JSON 对象，不要输出 Markdown。必须严格遵守以下 JSON Schema，禁止增加字段：\n${JSON.stringify(request.schema)}`,
+              content: `${request.instructions}\n只返回一个 JSON 对象，不要输出 Markdown。必须严格遵守以下 JSON Schema，禁止增加字段：\n${JSON.stringify(request.schema)}\n输出前逐项检查每个对象的字段，尤其数组中的每一项，不能混用相似字段名：\n${requiredFieldChecklist(request.schema).join('\n')}`,
             },
             { role: 'user', content: JSON.stringify(request.input) },
           ],
@@ -186,14 +210,24 @@ export class GLMModelProvider implements ModelProvider {
         !choice.message?.content ||
         (payload.model && payload.model !== this.model)
       ) {
-        throw new ModelProviderError('INVALID_OUTPUT');
+        throw new ModelProviderError(
+          'INVALID_OUTPUT',
+          choice?.finish_reason === 'length'
+            ? 'OUTPUT_TRUNCATED'
+            : 'RESPONSE_ENVELOPE',
+        );
       }
       let output: T;
       try {
         output = JSON.parse(choice.message.content) as T;
         assertSchema(output, request.schema);
-      } catch {
-        throw new ModelProviderError('INVALID_OUTPUT');
+      } catch (error) {
+        throw new ModelProviderError(
+          'INVALID_OUTPUT',
+          error instanceof SchemaValidationError
+            ? `SCHEMA:${error.issue}:${error.fieldPath}`
+            : 'JSON_PARSE',
+        );
       }
       return {
         output,

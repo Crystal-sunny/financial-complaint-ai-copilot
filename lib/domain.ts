@@ -55,7 +55,7 @@ export type RuntimeExecution = {
 
 export type RuntimeCapabilities = {
   defaultProvider: ProviderMode;
-  caseDataTransmission: 'paused';
+  caseDataTransmission: 'paused' | 'allowed';
   glm: {
     configured: boolean;
     available: boolean;
@@ -72,6 +72,12 @@ export type AgentStageId =
   | 'case_coordinator'
   | 'fact_rule_investigator'
   | 'disposition_compliance';
+
+export type InvestigationEvent =
+  | { type: 'stage_started'; stageId: AgentStageId; provider: ProviderMode }
+  | { type: 'fallback'; reason: string }
+  | { type: 'completed'; result: InvestigationResult }
+  | { type: 'error'; message: string };
 
 export type AgentRunTrace = {
   stageId: AgentStageId;

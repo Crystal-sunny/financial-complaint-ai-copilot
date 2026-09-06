@@ -1,5 +1,6 @@
 import type {
   Evidence,
+  InvestigationEvent,
   InvestigationResult,
   MockCase,
   ProviderMode,
@@ -24,8 +25,8 @@ import {
   type InvestigatorOutput,
 } from './model-contracts';
 import {
-  getRuntimeCapabilities,
-  OpenAIModelProvider,
+  createModelProvider,
+  ModelProviderError,
   type ModelCallMetadata,
 } from './model-provider';
 import { mockDatabase } from './mock-database';
@@ -36,17 +37,21 @@ import {
 } from './mock-tools';
 import { investigateRecordedCase } from './recorded-orchestrator';
 import {
+  InvestigationValidationError,
   validateInvestigation,
   type InvestigationPayload,
 } from './safety-validator';
 
 type PipelineOptions = {
   provider?: ProviderMode;
+  signal?: AbortSignal;
+  onEvent?: (event: InvestigationEvent) => void;
 };
 
 type ToolRun = {
   name: ToolName;
   response: ToolResponse;
+  elapsedMs: number;
 };
 
 const requiredToolsByType: Record<string, ToolName[]> = {
@@ -81,8 +86,7 @@ function deterministicSafetyResult(caseItem: MockCase) {
     /非本人|不是我|陌生消费|新设备|异地登录|登录不上|盗刷|账户.*接管/.test(
       caseItem.rawText,
     );
-  const mandatoryEscalation =
-    caseItem.expectedType === 'suspected_fraud' || securityLanguage;
+  const mandatoryEscalation = securityLanguage;
   return {
     mandatoryEscalation,
     reason: mandatoryEscalation
@@ -91,7 +95,11 @@ function deterministicSafetyResult(caseItem: MockCase) {
   };
 }
 
-function callArguments(caseItem: MockCase, tool: ToolName) {
+function callArguments(
+  caseItem: MockCase,
+  tool: ToolName,
+  businessType: CoordinatorOutput['complaintType'],
+) {
   switch (tool) {
     case 'get_customer_profile':
       return { customerId: caseItem.customerId };
@@ -118,7 +126,7 @@ function callArguments(caseItem: MockCase, tool: ToolName) {
       return {
         query: '投诉调查、证据边界与处置审批',
         effectiveAt: caseItem.receivedAt.slice(0, 10),
-        businessType: caseItem.expectedType,
+        businessType,
       };
   }
 }
@@ -211,16 +219,28 @@ function amountFromEvidence(
   ) {
     return null;
   }
-  for (const evidenceId of disposition.recommendation.evidenceIds) {
-    const evidence = investigator.evidence.find(
-      (item) => item.evidenceId === evidenceId,
-    );
-    const transaction = mockDatabase.transactions.find(
-      (item) => item.transactionId === evidence?.sourceRecordId,
-    );
-    if (transaction) return transaction.amount;
-  }
-  return null;
+  const citedSources = new Set(
+    investigator.evidence
+      .filter((item) =>
+        disposition.recommendation.evidenceIds.includes(item.evidenceId),
+      )
+      .map((item) => item.sourceRecordId),
+  );
+  const amounts = new Set(
+    mockDatabase.transactions
+      .filter(
+        (item) =>
+          citedSources.has(item.transactionId) &&
+          (disposition.recommendation.actionCode === 'WAIT_FOR_REVERSAL'
+            ? item.type === 'AUTOMATIC_REVERSAL' && item.status === 'PROCESSING'
+            : ['SCHEDULED_DEBIT', 'MANUAL_REPAYMENT_RETRY'].includes(
+                item.type,
+              ) && item.status === 'SUCCESS'),
+      )
+      .map((item) => item.amount),
+  );
+  // Never mistake the full early-repayment amount for the disputed later debit.
+  return amounts.size === 1 ? Array.from(amounts)[0] : null;
 }
 
 function assertModelReferences(
@@ -248,14 +268,20 @@ function assertModelReferences(
     ...disposition.recommendation.evidenceIds,
   ];
   if (citedEvidenceIds.some((item) => !evidenceIds.has(item))) {
-    throw new Error('模型输出包含不存在的证据引用');
+    throw new InvestigationValidationError(
+      '模型输出包含不存在的证据引用',
+      'MODEL_EVIDENCE_REFERENCE',
+    );
   }
   if (
     investigator.evidence.some(
       (item) => !context.validSourceRecordIds.has(item.sourceRecordId),
     )
   ) {
-    throw new Error('模型证据引用了工具结果中不存在的来源记录');
+    throw new InvestigationValidationError(
+      '模型证据引用了工具结果中不存在的来源记录',
+      'MODEL_SOURCE_REFERENCE',
+    );
   }
   if (
     investigator.applicableRules.some(
@@ -265,7 +291,10 @@ function assertModelReferences(
       (item) => !context.validRuleIds.has(item),
     )
   ) {
-    throw new Error('模型引用了未由规则工具返回的规则');
+    throw new InvestigationValidationError(
+      '模型引用了未由规则工具返回的规则',
+      'MODEL_RULE_REFERENCE',
+    );
   }
 }
 
@@ -275,6 +304,7 @@ function mapModelResult(
   investigator: InvestigatorOutput,
   disposition: DispositionOutput,
   toolRuns: ToolRun[],
+  providerMode: Exclude<ProviderMode, 'recorded'>,
 ): InvestigationPayload {
   const evidence: Evidence[] = investigator.evidence.map((item) => ({
     ...item,
@@ -286,16 +316,17 @@ function mapModelResult(
     runId: `RUN-${caseItem.caseId.slice(-5)}-${Date.now().toString(36).toUpperCase()}`,
     caseId: caseItem.caseId,
     generatedAt: new Date().toISOString(),
-    mode: 'OPENAI',
+    mode: providerMode === 'glm' ? 'GLM' : 'OPENAI',
     coordinator: {
       complaintType: coordinator.complaintType,
       riskLevel: coordinator.riskLevel,
       mandatoryEscalation: coordinator.mandatoryEscalation,
       summary: coordinator.caseBrief,
     },
-    toolTraces: toolRuns.map((item, index) =>
-      traceToolCall(item.name, item.response, index),
-    ),
+    toolTraces: toolRuns.map((item, index) => ({
+      ...traceToolCall(item.name, item.response, index),
+      elapsedMs: item.elapsedMs,
+    })),
     evidence,
     confirmedFacts: investigator.confirmedFacts.map((item) => item.statement),
     conflict: conflict
@@ -339,25 +370,47 @@ function mapModelResult(
   };
 }
 
-async function investigateWithOpenAI(caseItem: MockCase) {
-  const provider = new OpenAIModelProvider();
+async function investigateWithModel(
+  caseItem: MockCase,
+  providerMode: Exclude<ProviderMode, 'recorded'>,
+  options: PipelineOptions,
+) {
+  const provider = createModelProvider(providerMode);
   const safety = deterministicSafetyResult(caseItem);
   const calls: ModelCallMetadata[] = [];
+  const caseContext = {
+    caseId: caseItem.caseId,
+    rawText: caseItem.rawText,
+    customerId: caseItem.customerId,
+    loanId: caseItem.loanId,
+    channel: caseItem.channel,
+    receivedAt: caseItem.receivedAt,
+  };
+  const startStage = (
+    stageId:
+      | 'case_coordinator'
+      | 'fact_rule_investigator'
+      | 'disposition_compliance',
+  ) => {
+    options.signal?.throwIfAborted();
+    options.onEvent?.({
+      type: 'stage_started',
+      stageId,
+      provider: providerMode,
+    });
+  };
 
+  startStage('case_coordinator');
   const coordinatorCall = await provider.generateStructured<CoordinatorOutput>({
     stage: 'case_coordinator',
     instructions: coordinatorPrompt,
     input: {
-      caseId: caseItem.caseId,
-      rawText: caseItem.rawText,
-      customerId: caseItem.customerId,
-      loanId: caseItem.loanId,
-      channel: caseItem.channel,
-      receivedAt: caseItem.receivedAt,
+      ...caseContext,
       deterministicSafetyResult: safety,
     },
     schemaName: 'case_coordinator_output',
     schema: coordinatorSchema,
+    signal: options.signal,
   });
   assertCoordinatorOutput(coordinatorCall.output);
   calls.push(coordinatorCall.metadata);
@@ -368,30 +421,41 @@ async function investigateWithOpenAI(caseItem: MockCase) {
     coordinatorCall.output.complaintType = 'suspected_fraud';
   }
 
+  startStage('fact_rule_investigator');
   const toolPlan = buildToolPlan(caseItem, coordinatorCall.output);
-  const toolRuns = toolPlan.map((name) => ({
-    name,
-    response: runReadOnlyTool(
+  const toolRuns = toolPlan.map((name) => {
+    const startedAt = performance.now();
+    const response = runReadOnlyTool(
       name,
-      callArguments(caseItem, name),
+      callArguments(caseItem, name, coordinatorCall.output.complaintType),
       name === 'get_customer_profile'
         ? 'case_coordinator'
         : 'fact_rule_investigator',
-    ),
-  }));
+    );
+    return {
+      name,
+      response,
+      elapsedMs: Math.max(0, Math.round(performance.now() - startedAt)),
+    };
+  });
 
   const investigatorCall =
     await provider.generateStructured<InvestigatorOutput>({
       stage: 'fact_rule_investigator',
       instructions: investigatorPrompt,
       input: {
-        case: caseItem,
+        case: caseContext,
         coordinator: coordinatorCall.output,
         deterministicSafetyResult: safety,
         toolResults: toolRuns,
+        allowedSourceRecordIds: Array.from(
+          validContext(toolRuns).validSourceRecordIds,
+        ),
+        allowedRuleIds: Array.from(validContext(toolRuns).validRuleIds),
       },
       schemaName: 'fact_rule_investigator_output',
       schema: investigatorSchema,
+      signal: options.signal,
     });
   assertInvestigatorOutput(investigatorCall.output);
   calls.push(investigatorCall.metadata);
@@ -400,6 +464,7 @@ async function investigateWithOpenAI(caseItem: MockCase) {
     investigatorCall.output.evidenceGate.reason = safety.reason;
   }
 
+  startStage('disposition_compliance');
   const dispositionCall = await provider.generateStructured<DispositionOutput>({
     stage: 'disposition_compliance',
     instructions: dispositionPrompt,
@@ -413,6 +478,7 @@ async function investigateWithOpenAI(caseItem: MockCase) {
     },
     schemaName: 'disposition_compliance_output',
     schema: dispositionSchema,
+    signal: options.signal,
   });
   assertDispositionOutput(dispositionCall.output);
   calls.push(dispositionCall.metadata);
@@ -438,6 +504,7 @@ async function investigateWithOpenAI(caseItem: MockCase) {
       investigatorCall.output,
       dispositionCall.output,
       toolRuns,
+      providerMode,
     ),
     toolRuns,
     model: calls.at(-1)?.model ?? provider.model,
@@ -463,6 +530,7 @@ function withExecution(
   );
   return {
     ...result,
+    runId: `RUN-${options.caseItem.caseId.slice(-5)}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`,
     agentRuns: buildAgentRunTraces({
       caseItem: options.caseItem,
       result,
@@ -488,32 +556,41 @@ export async function investigateCase(
   const caseItem = mockDatabase.cases.find((item) => item.caseId === caseId);
   if (!caseItem) return null;
   const requestedProvider = options.provider ?? 'recorded';
-  // Enforce the owner's pause before creating a provider or entering fallback.
-  assertInvestigationProviderAllowed(requestedProvider);
+  assertInvestigationProviderAllowed(requestedProvider, caseId);
+  options.signal?.throwIfAborted();
 
-  if (requestedProvider === 'openai') {
+  if (requestedProvider !== 'recorded') {
     try {
-      const modelRun = await investigateWithOpenAI(caseItem);
+      const modelRun = await investigateWithModel(
+        caseItem,
+        requestedProvider,
+        options,
+      );
       return withExecution(modelRun.result, {
         caseItem,
         requestedProvider,
-        actualProvider: 'openai',
+        actualProvider: requestedProvider,
         model: modelRun.model,
         modelCalls: modelRun.modelCalls,
         toolRuns: modelRun.toolRuns,
       });
-    } catch {
+    } catch (error) {
+      options.signal?.throwIfAborted();
       const recorded = investigateRecordedCase(caseId);
       if (!recorded) return null;
-      const available = getRuntimeCapabilities().openai.available;
+      const fallbackReason =
+        error instanceof ModelProviderError
+          ? `${error.message}${error.diagnostic ? `（${error.diagnostic}）` : ''}，已切换稳定模式。`
+          : error instanceof InvestigationValidationError
+            ? `${error.message}（${error.code}），已切换稳定模式。`
+            : '模型输出未通过安全校验，已切换稳定模式。';
+      options.onEvent?.({ type: 'fallback', reason: fallbackReason });
       return withExecution(recorded, {
         caseItem,
         requestedProvider,
         actualProvider: 'recorded',
         model: null,
-        fallbackReason: available
-          ? '模型输出未通过安全校验，已切换稳定模式。'
-          : '模型服务尚未启用，已使用稳定模式。',
+        fallbackReason,
       });
     }
   }

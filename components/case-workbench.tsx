@@ -63,6 +63,7 @@ import type {
   ProviderMode,
   RuntimeCapabilities,
 } from '@/lib/domain';
+import { readInvestigationStream } from '@/lib/investigation-stream';
 
 type DecisionState = 'idle' | 'pending' | 'approved' | 'returned' | 'replied';
 
@@ -316,6 +317,11 @@ export function CaseWorkbench() {
       return next;
     });
     setAuditByCase((current) => ({ ...current, [caseId]: false }));
+    setResultsByCase((current) => {
+      const next = { ...current };
+      delete next[caseId];
+      return next;
+    });
     setRunningCaseId(caseId);
     setRunStepsByCase((current) => ({ ...current, [caseId]: 0 }));
     setExpandedAgentByCase((current) => ({
@@ -324,29 +330,40 @@ export function CaseWorkbench() {
     }));
 
     try {
-      const request = fetch(`/api/cases/${caseId}/investigate`, {
+      const response = await fetch(`/api/cases/${caseId}/investigate`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/x-ndjson',
+        },
         body: JSON.stringify({ provider: providerMode }),
       });
-      await new Promise((resolve) => setTimeout(resolve, 420));
-      setRunStepsByCase((current) => ({ ...current, [caseId]: 1 }));
-      setExpandedAgentByCase((current) => ({
-        ...current,
-        [caseId]: 'fact_rule_investigator',
-      }));
-      await new Promise((resolve) => setTimeout(resolve, 580));
-      setRunStepsByCase((current) => ({ ...current, [caseId]: 2 }));
-      setExpandedAgentByCase((current) => ({
-        ...current,
-        [caseId]: 'disposition_compliance',
-      }));
-      const response = await request;
-      if (!response.ok) throw new Error('调查服务暂时不可用');
-      const data = (await response.json()) as InvestigationResult;
-      await new Promise((resolve) => setTimeout(resolve, 520));
+      const data = await readInvestigationStream(response, (event) => {
+        if (event.type === 'stage_started') {
+          const index = runStages.findIndex(
+            (stage) => stage.stageId === event.stageId,
+          );
+          setRunStepsByCase((current) => ({ ...current, [caseId]: index }));
+          setExpandedAgentByCase((current) => ({
+            ...current,
+            [caseId]: event.stageId,
+          }));
+        } else if (event.type === 'fallback') {
+          setRunStepsByCase((current) => ({ ...current, [caseId]: 0 }));
+          setExpandedAgentByCase((current) => ({
+            ...current,
+            [caseId]: 'case_coordinator',
+          }));
+        }
+      });
       setResultsByCase((current) => ({ ...current, [caseId]: data }));
-      setDecisionsByCase((current) => ({ ...current, [caseId]: 'pending' }));
+      setDecisionsByCase((current) => ({
+        ...current,
+        [caseId]:
+          data.recommendation.state === 'NEEDS_INFORMATION'
+            ? 'returned'
+            : 'pending',
+      }));
       setEvidenceByCase((current) => ({ ...current, [caseId]: null }));
       setRunStepsByCase((current) => ({ ...current, [caseId]: 3 }));
       setExpandedAgentByCase((current) => ({
@@ -372,7 +389,12 @@ export function CaseWorkbench() {
   }
 
   async function approveRecommendation() {
-    if (!result || approvalSubmittingCaseId) return;
+    if (
+      !result ||
+      approvalSubmittingCaseId ||
+      result.recommendation.state === 'NEEDS_INFORMATION'
+    )
+      return;
     const caseId = selectedId;
     setApprovalSubmittingCaseId(caseId);
     setErrorsByCase((current) => ({ ...current, [caseId]: null }));
@@ -380,8 +402,15 @@ export function CaseWorkbench() {
     try {
       const response = await fetch(`/api/cases/${caseId}/approval`, {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ runId: result.runId }),
       });
-      if (!response.ok) throw new Error('审批结果暂时无法返回');
+      if (!response.ok)
+        throw new Error(
+          response.status === 409
+            ? '当前调查需要补充核验，不能直接生成审批结论；请复核建议或重新调查。'
+            : '审批结果暂时无法返回',
+        );
       const outcome = (await response.json()) as ApprovalOutcome;
       setApprovalsByCase((current) => ({ ...current, [caseId]: outcome }));
       setDecisionsByCase((current) => ({
@@ -1052,16 +1081,23 @@ export function CaseWorkbench() {
                           variant={
                             providerMode === 'glm' ? 'secondary' : 'ghost'
                           }
-                          disabled
+                          onClick={() => setProviderMode('glm')}
+                          disabled={
+                            !runtime.glm.available || Boolean(runningCaseId)
+                          }
                           aria-describedby="model-availability"
                           title={
-                            runtime.glm.configured
-                              ? '密钥已配置，案件数据外发已暂停'
-                              : '待配置智谱密钥；案件数据外发已暂停'
+                            runtime.glm.available
+                              ? `使用 ${runtime.glm.model} 调查已授权案件`
+                              : runtime.caseDataTransmission === 'paused'
+                                ? '案件数据外发已暂停'
+                                : '请先配置智谱密钥'
                           }
                           className="h-7 text-[10px]"
                         >
-                          智谱 GLM · 已暂停
+                          {runtime.caseDataTransmission === 'paused'
+                            ? '智谱 GLM · 已暂停'
+                            : '智谱 GLM'}
                         </Button>
                       </div>
                       <p
@@ -1069,9 +1105,11 @@ export function CaseWorkbench() {
                         aria-live="polite"
                         className="mt-1.5 break-words text-[9px] leading-4 text-slate-500"
                       >
-                        {runtime.glm.configured
-                          ? `${runtime.glm.model} 密钥已配置；案件外发已暂停，当前使用稳定模式，不消耗模型额度。`
-                          : '智谱密钥待配置；案件外发已暂停，稳定模式正常可用。'}
+                        {runtime.glm.available
+                          ? `可用模型：${runtime.glm.model}。仅向智谱发送已授权案件的必要记录，运行将消耗模型额度。`
+                          : runtime.caseDataTransmission === 'paused'
+                            ? '案件外发已暂停；稳定模式正常可用，不消耗模型额度。'
+                            : '智谱密钥待配置；稳定模式正常可用。'}
                       </p>
 
                       {result ? (
@@ -1079,7 +1117,7 @@ export function CaseWorkbench() {
                           <div className="flex flex-wrap items-center justify-between gap-2">
                             <span className="inline-flex min-w-0 items-center gap-1.5 break-all text-[10px] font-semibold text-teal-900">
                               <Activity className="size-3.5 shrink-0 text-teal-700" />
-                              {result.execution.actualProvider === 'openai'
+                              {result.execution.actualProvider !== 'recorded'
                                 ? result.execution.model
                                 : '稳定执行流'}
                             </span>
@@ -1272,7 +1310,7 @@ export function CaseWorkbench() {
                                           <div className="mt-1.5 min-w-0 rounded-md bg-slate-950 p-2 text-slate-200">
                                             <div className="flex flex-wrap items-center justify-between gap-1 text-[8px] text-slate-400">
                                               <span>
-                                                {trace.provider === 'openai'
+                                                {trace.provider !== 'recorded'
                                                   ? '模型执行'
                                                   : '稳定执行'}
                                               </span>
@@ -1342,7 +1380,7 @@ export function CaseWorkbench() {
                                   : 'text-emerald-700'
                               }`}
                             />
-                            {result.execution.actualProvider === 'openai'
+                            {result.execution.actualProvider !== 'recorded'
                               ? '模型结果已通过安全校验'
                               : '稳定结果已通过安全校验'}
                           </p>
@@ -1375,7 +1413,7 @@ export function CaseWorkbench() {
                             ? '另一案件调查中…'
                             : result
                               ? '重新运行 Agent 调查'
-                              : providerMode === 'openai'
+                              : providerMode !== 'recorded'
                                 ? '开始模型 Agent 调查'
                                 : '开始 AI Agent 调查'}
                         {isRunning ? (
@@ -1521,7 +1559,7 @@ export function CaseWorkbench() {
                       {decision === 'approved' || decision === 'replied'
                         ? '已通过'
                         : decision === 'returned'
-                          ? '已退回'
+                          ? '待补充核验'
                           : '审批中'}
                     </Badge>
                   </div>
@@ -1533,7 +1571,9 @@ export function CaseWorkbench() {
                       </span>
                       <div>
                         <p className="text-[10px] font-semibold text-slate-700">
-                          处置建议已自动提交
+                          {result.recommendation.state === 'NEEDS_INFORMATION'
+                            ? '证据不足或冲突，暂不提交审批'
+                            : '处置建议已自动提交'}
                         </p>
                         <p className="mt-0.5 text-[9px] leading-4 text-slate-500">
                           {approvalLabels[result.approval.level]} ·{' '}

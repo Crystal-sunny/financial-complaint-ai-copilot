@@ -1,8 +1,24 @@
 // Checks the JSON Schema vocabulary used by our three agent contracts.
 // JSON mode alone guarantees neither the fields nor their business meaning.
-export function assertSchema(value: unknown, schema: Record<string, unknown>) {
-  const fail = () => {
-    throw new Error('模型输出不符合结构化契约');
+export class SchemaValidationError extends Error {
+  constructor(
+    readonly fieldPath: string,
+    readonly issue: string,
+  ) {
+    super('模型输出不符合结构化契约');
+    this.name = 'SchemaValidationError';
+  }
+}
+
+export function assertSchema(
+  value: unknown,
+  schema: Record<string, unknown>,
+  path = '$',
+) {
+  const fail = (issue = 'TYPE', fieldPath = path) => {
+    // Only paths formed from our trusted schema keys, never response values or
+    // unknown provider keys, are available for diagnostics.
+    throw new SchemaValidationError(fieldPath, issue);
   };
   if ('const' in schema && value !== schema.const) fail();
   if (Array.isArray(schema.enum) && !schema.enum.includes(value)) fail();
@@ -14,12 +30,12 @@ export function assertSchema(value: unknown, schema: Record<string, unknown>) {
       Record<string, unknown>
     >;
     for (const key of (schema.required ?? []) as string[]) {
-      if (!Object.hasOwn(object, key)) fail();
+      if (!Object.hasOwn(object, key)) fail('MISSING_FIELD', `${path}.${key}`);
     }
     for (const [key, item] of Object.entries(object)) {
       if (!Object.hasOwn(properties, key)) {
-        if (schema.additionalProperties === false) fail();
-      } else assertSchema(item, properties[key]);
+        if (schema.additionalProperties === false) fail('EXTRA_FIELD');
+      } else assertSchema(item, properties[key], `${path}.${key}`);
     }
   } else if (schema.type === 'array') {
     if (!Array.isArray(value)) fail();
@@ -33,7 +49,11 @@ export function assertSchema(value: unknown, schema: Record<string, unknown>) {
       const itemSchema = index < prefix.length ? prefix[index] : schema.items;
       if (itemSchema === false) fail();
       if (itemSchema && typeof itemSchema === 'object')
-        assertSchema(item, itemSchema as Record<string, unknown>);
+        assertSchema(
+          item,
+          itemSchema as Record<string, unknown>,
+          `${path}[${index}]`,
+        );
     });
   } else if (schema.type === 'string') {
     if (typeof value !== 'string') fail();

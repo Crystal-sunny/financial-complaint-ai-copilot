@@ -11,6 +11,7 @@ process.env.GLM_API_KEY = 'offline-glm-key-sentinel';
 process.env.OPENAI_API_KEY = 'offline-openai-key-sentinel';
 process.env.GLM_BASE_URL = 'https://open.bigmodel.cn/api/paas/v4';
 process.env.GLM_MODEL = 'glm-5.3-flash';
+process.env.GLM_CASE_DATA_PAUSED = 'true';
 process.env.OPENAI_MODEL = 'gpt-5.4-mini';
 
 const { getRuntimeCapabilities } =

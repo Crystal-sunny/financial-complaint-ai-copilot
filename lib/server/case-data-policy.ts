@@ -1,19 +1,36 @@
 import type { ProviderMode } from '../domain';
 
-// The owner has explicitly paused external case transmission. A configured
-// credential is not consent. Keep this closed until permission is renewed;
-// neither a browser request nor an environment variable can override the pause.
-export const caseDataTransmissionStatus = 'paused' as const;
+// Owner explicitly authorized these three synthetic cases for GLM investigation
+// and verification on 2026-09-04. This does not authorize other providers/cases.
+const authorizedCaseIds = new Set([
+  'CMP-2026-09001',
+  'CMP-2026-09002',
+  'CMP-2026-09003',
+]);
+
+export function getCaseDataTransmissionStatus(): 'allowed' | 'paused' {
+  // Operational kill switch can restrict consent, never expand its scope.
+  return process.env.GLM_CASE_DATA_PAUSED === 'true' ? 'paused' : 'allowed';
+}
 
 export class CaseDataTransmissionPausedError extends Error {
   readonly code = 'CASE_DATA_TRANSMISSION_PAUSED';
 
   constructor() {
-    super('案件数据外发已暂停；当前仅可使用稳定模式。');
+    super('当前模型或案件的外发未启用；请使用稳定模式。');
     this.name = 'CaseDataTransmissionPausedError';
   }
 }
 
-export function assertInvestigationProviderAllowed(provider: ProviderMode) {
-  if (provider !== 'recorded') throw new CaseDataTransmissionPausedError();
+export function assertInvestigationProviderAllowed(
+  provider: ProviderMode,
+  caseId: string,
+) {
+  if (provider === 'recorded') return;
+  if (
+    provider !== 'glm' ||
+    !authorizedCaseIds.has(caseId) ||
+    getCaseDataTransmissionStatus() === 'paused'
+  )
+    throw new CaseDataTransmissionPausedError();
 }

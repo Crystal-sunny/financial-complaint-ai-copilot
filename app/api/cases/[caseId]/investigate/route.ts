@@ -1,6 +1,11 @@
-import type { ProviderMode } from '@/lib/domain';
-import { CaseDataTransmissionPausedError } from '@/lib/server/case-data-policy';
+import type { InvestigationEvent, ProviderMode } from '@/lib/domain';
+import {
+  assertInvestigationProviderAllowed,
+  CaseDataTransmissionPausedError,
+} from '@/lib/server/case-data-policy';
+import { mockDatabase } from '@/lib/server/mock-database';
 import { investigateCase } from '@/lib/server/pipeline-orchestrator';
+import { registerApprovalContext } from '@/lib/server/approval-context';
 
 export async function POST(
   request: Request,
@@ -31,7 +36,57 @@ export async function POST(
   }
   let result;
   try {
-    result = await investigateCase(caseId, { provider });
+    if (!mockDatabase.cases.some((item) => item.caseId === caseId))
+      return Response.json(
+        { error: 'CASE_NOT_FOUND' },
+        { status: 404, headers },
+      );
+    assertInvestigationProviderAllowed(provider, caseId);
+    if (request.headers.get('accept')?.includes('application/x-ndjson')) {
+      const abort = new AbortController();
+      const signal = AbortSignal.any([request.signal, abort.signal]);
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream<Uint8Array>({
+        async start(controller) {
+          const send = (event: InvestigationEvent) => {
+            if (!signal.aborted)
+              controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+          };
+          try {
+            const investigation = await investigateCase(caseId, {
+              provider,
+              signal,
+              onEvent: send,
+            });
+            if (investigation) {
+              registerApprovalContext(investigation);
+              send({ type: 'completed', result: investigation });
+            }
+          } catch {
+            send({
+              type: 'error',
+              message: '调查服务暂时不可用，请稍后重试。',
+            });
+          } finally {
+            if (!abort.signal.aborted) controller.close();
+          }
+        },
+        cancel() {
+          abort.abort();
+        },
+      });
+      return new Response(stream, {
+        headers: {
+          ...headers,
+          'Content-Type': 'application/x-ndjson; charset=utf-8',
+          'X-Content-Type-Options': 'nosniff',
+        },
+      });
+    }
+    result = await investigateCase(caseId, {
+      provider,
+      signal: request.signal,
+    });
   } catch (error) {
     if (error instanceof CaseDataTransmissionPausedError) {
       return Response.json(
@@ -46,6 +101,7 @@ export async function POST(
     return Response.json({ error: 'CASE_NOT_FOUND' }, { status: 404, headers });
   }
 
+  registerApprovalContext(result);
   return Response.json(result, {
     headers: {
       ...headers,
