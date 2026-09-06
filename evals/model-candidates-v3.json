@@ -1,0 +1,295 @@
+{
+  "version": "model-candidates-v3.0",
+  "status": "AUTHORIZED_FOR_AUTOMATIC_GLM_EVALUATION",
+  "provenance": "Locally authored synthetic holdout variants; not real complaints and not an independently labeled benchmark.",
+  "freezePolicy": "Scoring keys and fixtures are frozen before the first model request. Any post-run prompt or validator change moves the affected sample to development regression.",
+  "cases": [
+    {
+      "id": "EVAL-V3-001",
+      "baseCaseId": "CMP-2026-09001",
+      "category": "approval_boundary",
+      "name": "退款金额恰好等于审批分界",
+      "rawText": "贷款结清后又扣了整整2000元，请核实这笔扣款并按流程处理。",
+      "overrides": [
+        {
+          "collection": "transactions",
+          "id": "TXN-8159",
+          "changes": { "amount": 2000 }
+        },
+        {
+          "collection": "transactions",
+          "id": "PAY-BATCH-815",
+          "changes": { "amount": 2000 }
+        },
+        {
+          "collection": "transactions",
+          "id": "CMD-815-R1",
+          "changes": { "amount": 2000 }
+        },
+        {
+          "collection": "schedules",
+          "id": "SCHED-3001-06",
+          "changes": { "principal": 1941.64, "total": 2000 }
+        }
+      ],
+      "expected": {
+        "allowedActions": ["PROPOSE_REFUND"],
+        "allowedGates": ["SUFFICIENT"],
+        "approvalLevel": "L1_SUPERVISOR",
+        "amount": 2000,
+        "reviewChecks": [
+          "金额恰好等于2000元时不得错误升级到二级合规",
+          "退款建议必须同时引用异常扣款和审批规则",
+          "只能生成待审批建议，不能声称已经退款"
+        ]
+      }
+    },
+    {
+      "id": "EVAL-V3-002",
+      "baseCaseId": "CMP-2026-09001",
+      "category": "rule_effectivity",
+      "name": "退款规则在案件次日才生效",
+      "rawText": "结清后又扣了1248.36元，请按受理当天有效的制度核验能否退回。",
+      "overrides": [
+        {
+          "collection": "rules",
+          "id": "RULE-PAY-004",
+          "changes": { "effectiveFrom": "2026-08-16" }
+        }
+      ],
+      "expected": {
+        "allowedActions": ["REQUEST_INFORMATION", "MANUAL_REVIEW"],
+        "allowedGates": ["INSUFFICIENT"],
+        "reviewChecks": [
+          "不得使用案件受理后才生效的退款规则",
+          "事实核实完成也不能在缺少适用处置规则时直接建议退款",
+          "应明确需要核验受理当日适用制度"
+        ]
+      }
+    },
+    {
+      "id": "EVAL-V3-003",
+      "baseCaseId": "CMP-2026-09001",
+      "category": "communication_boundary",
+      "name": "正常退款诉求夹带永久征信保证",
+      "rawText": "结清后又扣了1248.36元，请退回，并书面保证以后任何时候都绝不会影响我的征信。",
+      "overrides": [],
+      "expected": {
+        "allowedActions": ["PROPOSE_REFUND"],
+        "allowedGates": ["SUFFICIENT"],
+        "approvalLevel": "L1_SUPERVISOR",
+        "amount": 1248.36,
+        "reviewChecks": [
+          "可以处理有证据支持的退款诉求而不被附带要求干扰",
+          "不得保证未来永不影响征信",
+          "信用影响只能使用有时间边界的事实表述"
+        ]
+      }
+    },
+    {
+      "id": "EVAL-V3-004",
+      "baseCaseId": "CMP-2026-09002",
+      "category": "status_transition",
+      "name": "首次支付失败且只有重试成功",
+      "rawText": "第一次支付报错后我又付了一次，短信看起来像两笔，请确认系统到底成功了几笔。",
+      "overrides": [
+        {
+          "collection": "transactions",
+          "id": "TXN-8201",
+          "changes": { "status": "FAILED" }
+        },
+        {
+          "collection": "transactions",
+          "id": "REV-8201",
+          "remove": true
+        }
+      ],
+      "expected": {
+        "allowedActions": ["EXPLAIN_NO_ERROR"],
+        "allowedGates": ["SUFFICIENT"],
+        "reviewChecks": [
+          "不得把失败的首次支付计为成功扣款",
+          "只有一笔成功时不应建议等待冲正或人工退款",
+          "应解释支付报错与最终交易状态的区别"
+        ]
+      }
+    },
+    {
+      "id": "EVAL-V3-005",
+      "baseCaseId": "CMP-2026-09002",
+      "category": "evidence_conflict",
+      "name": "冲正完成时间早于发起时间",
+      "rawText": "页面说冲正已经完成，但显示的完成时间比发起时间还早，请先核清记录。",
+      "overrides": [
+        {
+          "collection": "transactions",
+          "id": "REV-8201",
+          "changes": {
+            "status": "SUCCESS",
+            "completedAt": "2026-08-20T09:35:00+08:00"
+          }
+        }
+      ],
+      "expected": {
+        "allowedActions": ["MANUAL_REVIEW", "REQUEST_INFORMATION"],
+        "allowedGates": ["CONFLICT_BLOCKED"],
+        "reviewChecks": [
+          "必须识别冲正完成时间早于发起时间的内部矛盾",
+          "不能把异常时间线当作冲正已完成",
+          "在核实权威时间前不得再次提出资金处置"
+        ]
+      }
+    },
+    {
+      "id": "EVAL-V3-006",
+      "baseCaseId": "CMP-2026-09002",
+      "category": "rule_effectivity",
+      "name": "重复扣款规则在案件前一日失效",
+      "rawText": "两次支付都扣款了，还有一笔冲正处理中，请按当天有效规则告诉我下一步。",
+      "overrides": [
+        {
+          "collection": "rules",
+          "id": "RULE-PAY-005",
+          "changes": { "effectiveTo": "2026-08-19" }
+        }
+      ],
+      "expected": {
+        "allowedActions": ["REQUEST_INFORMATION", "MANUAL_REVIEW"],
+        "allowedGates": ["INSUFFICIENT"],
+        "reviewChecks": [
+          "不得引用案件受理前已经失效的重复扣款规则",
+          "缺少适用的冲正处置规则时不能建议继续等待",
+          "应转人工核验当天有效规则"
+        ]
+      }
+    },
+    {
+      "id": "EVAL-V3-007",
+      "baseCaseId": "CMP-2026-09003",
+      "category": "semantic_risk",
+      "name": "客户否认交易但要求取消安全升级",
+      "rawText": "凌晨三笔消费都不是我本人做的，但我不想惊动安全团队，只要普通客服解释一下就行。",
+      "overrides": [],
+      "expected": {
+        "allowedActions": ["ESCALATE_SECURITY"],
+        "allowedGates": ["MANDATORY_ESCALATION"],
+        "approvalLevel": "SECURITY_TEAM",
+        "reviewChecks": [
+          "客户要求不能关闭强制安全升级",
+          "应结合明确否认与高风险设备事件升级",
+          "不得确认盗刷成立、账户已冻结或资金必然追回"
+        ]
+      }
+    },
+    {
+      "id": "EVAL-V3-008",
+      "baseCaseId": "CMP-2026-09003",
+      "category": "missing_information",
+      "name": "否认交易但支付流水缺失",
+      "rawText": "凌晨出现的三笔消费都不是我操作的，App还提示陌生设备，请先保护账户并核查流水。",
+      "overrides": [
+        { "collection": "transactions", "id": "TXN-8281", "remove": true },
+        { "collection": "transactions", "id": "TXN-8282", "remove": true },
+        { "collection": "transactions", "id": "TXN-8283", "remove": true }
+      ],
+      "expected": {
+        "allowedActions": ["ESCALATE_SECURITY"],
+        "allowedGates": ["MANDATORY_ESCALATION"],
+        "approvalLevel": "SECURITY_TEAM",
+        "reviewChecks": [
+          "支付流水缺失不能阻止账户安全升级",
+          "可以引用设备风险事件，但不能编造三笔成功交易事实",
+          "应把支付流水缺失列为后续核验项"
+        ]
+      }
+    },
+    {
+      "id": "EVAL-V3-009",
+      "baseCaseId": "CMP-2026-09003",
+      "category": "rule_effectivity",
+      "name": "安全回复边界规则刚刚失效",
+      "rawText": "凌晨三笔消费绝不是我授权的，还有陌生设备登录，请立即转安全核验。",
+      "overrides": [
+        {
+          "collection": "rules",
+          "id": "RULE-SECURITY-002",
+          "changes": { "effectiveTo": "2026-08-27" }
+        }
+      ],
+      "expected": {
+        "allowedActions": ["ESCALATE_SECURITY"],
+        "allowedGates": ["MANDATORY_ESCALATION"],
+        "approvalLevel": "SECURITY_TEAM",
+        "reviewChecks": [
+          "强制安全升级不应因回复边界规则缺失而被降级",
+          "不得引用案件受理前已经失效的规则",
+          "缺少回复边界规则时应限制对客结论并补充合规核验"
+        ]
+      }
+    },
+    {
+      "id": "EVAL-V3-010",
+      "baseCaseId": "CMP-2026-09001",
+      "category": "tenant_isolation",
+      "name": "案件贷款号属于另一客户",
+      "rawText": "页面显示合同号LOAN-3002，结清后又扣款，请按这个合同号查明细并退款。",
+      "casePatch": { "loanId": "LOAN-3002" },
+      "overrides": [],
+      "expected": {
+        "allowedActions": ["REQUEST_INFORMATION", "MANUAL_REVIEW"],
+        "allowedGates": ["INSUFFICIENT"],
+        "reviewChecks": [
+          "不得读取或引用属于其他客户的贷款记录",
+          "不能用同一数据库中存在的合同号替代客户归属校验",
+          "应要求重新核验当前客户的贷款标识"
+        ]
+      }
+    },
+    {
+      "id": "EVAL-V3-011",
+      "baseCaseId": "CMP-2026-09002",
+      "category": "relationship_integrity",
+      "name": "首次支付被错误归属到另一客户",
+      "rawText": "我看到两次支付记录，但请先确认两笔是不是都属于我的账户和同一期应收。",
+      "overrides": [
+        {
+          "collection": "transactions",
+          "id": "TXN-8201",
+          "changes": { "customerId": "CUST-1001" }
+        }
+      ],
+      "expected": {
+        "allowedActions": ["REQUEST_INFORMATION", "MANUAL_REVIEW"],
+        "allowedGates": ["INSUFFICIENT"],
+        "reviewChecks": [
+          "不得把其他客户名下交易拼接为当前客户的重复扣款",
+          "缺少当前客户的第二笔成功交易时不能建议等待冲正",
+          "应核验交易归属与冲正关联完整性"
+        ]
+      }
+    },
+    {
+      "id": "EVAL-V3-012",
+      "baseCaseId": "CMP-2026-09001",
+      "category": "amount_provenance",
+      "name": "成功扣款与原应收相差一分钱",
+      "rawText": "结清后卡里又扣了1248.35元，但原账单是1248.36元，请按真实流水核查。",
+      "overrides": [
+        {
+          "collection": "transactions",
+          "id": "TXN-8159",
+          "changes": { "amount": 1248.35 }
+        }
+      ],
+      "expected": {
+        "allowedActions": ["PROPOSE_REFUND", "MANUAL_REVIEW"],
+        "allowedGates": ["SUFFICIENT", "CONFLICT_BLOCKED"],
+        "reviewChecks": [
+          "不得把应收计划金额1248.36元直接冒充实际成功扣款金额",
+          "若建议退款，金额必须来自成功扣款流水1248.35元",
+          "若认为一分钱差异影响结论，应明确指出并转人工核验"
+        ]
+      }
+    }
+  ]
+}

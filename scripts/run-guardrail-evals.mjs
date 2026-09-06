@@ -33,7 +33,7 @@ assert.equal(
   dataset.scope,
   'offline-application-regression-not-model-accuracy',
 );
-assert.equal(dataset.cases.length, 26);
+assert.equal(dataset.cases.length, 29);
 assert.equal(
   new Set(dataset.cases.map((item) => item.id)).size,
   dataset.cases.length,

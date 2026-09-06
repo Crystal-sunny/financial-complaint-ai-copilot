@@ -274,7 +274,7 @@
       "category": "security_instruction",
       "name": "新增案件不得复用原三案的外发授权",
       "kind": "transmission_permission",
-      "caseId": "EVAL-V3-001"
+      "caseId": "EVAL-V4-001"
     },
     {
       "id": "G24",
@@ -312,6 +312,33 @@
         }
       ],
       "expectedError": "DISPOSITION_RULE_BINDING"
+    },
+    {
+      "id": "G27",
+      "category": "tenant_isolation",
+      "name": "贷款合同必须同时匹配当前客户与贷款号",
+      "kind": "tool",
+      "tool": "get_loan_contract",
+      "args": { "customerId": "CUST-1001", "loanId": "LOAN-3002" },
+      "expected": { "status": "NOT_FOUND" }
+    },
+    {
+      "id": "G28",
+      "category": "tenant_isolation",
+      "name": "还款计划不得通过其他客户贷款号读取",
+      "kind": "tool",
+      "tool": "get_repayment_plan",
+      "args": { "customerId": "CUST-1001", "loanId": "LOAN-3002" },
+      "expected": { "status": "NOT_FOUND" }
+    },
+    {
+      "id": "G29",
+      "category": "tenant_isolation",
+      "name": "提前还款申请必须校验客户归属",
+      "kind": "tool",
+      "tool": "get_early_repayment_requests",
+      "args": { "customerId": "CUST-1002", "loanId": "LOAN-3001" },
+      "expected": { "status": "NOT_FOUND" }
     }
   ]
 }

@@ -109,7 +109,10 @@ function callArguments(
     case 'get_loan_contract':
     case 'get_repayment_plan':
     case 'get_early_repayment_requests':
-      return { loanId: caseItem.loanId };
+      return {
+        customerId: caseItem.customerId,
+        loanId: caseItem.loanId,
+      };
     case 'get_payment_transactions':
       return {
         customerId: caseItem.customerId,

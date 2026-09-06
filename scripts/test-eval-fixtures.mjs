@@ -17,30 +17,43 @@ globalThis.fetch = async () => {
   throw new Error('OFFLINE_NETWORK_DISABLED');
 };
 delete process.env.GLM_CASE_DATA_PAUSED;
-const text = await readFile(
-  new URL('../evals/model-candidates-v2.json', import.meta.url),
-  'utf8',
-);
-const dataset = JSON.parse(text);
-const lock = JSON.parse(
-  await readFile(
-    new URL('../evals/model-candidates-v2.lock.json', import.meta.url),
+async function loadSuite(suite) {
+  const text = await readFile(
+    new URL(`../evals/model-candidates-${suite}.json`, import.meta.url),
     'utf8',
-  ),
-);
-assert.equal(dataset.cases.length, 12);
-assert.equal(new Set(dataset.cases.map((item) => item.id)).size, 12);
-assert.equal(dataset.status, 'AUTHORIZED_FOR_AUTOMATIC_GLM_EVALUATION');
-assert.equal(
-  createHash('sha256').update(text).digest('hex'),
-  lock.datasetSha256,
-);
-assert.deepEqual(
-  Object.values(lock.batches).flat().sort(),
-  dataset.cases.map((item) => item.id).sort(),
-);
+  );
+  return {
+    text,
+    dataset: JSON.parse(text),
+    lock: JSON.parse(
+      await readFile(
+        new URL(
+          `../evals/model-candidates-${suite}.lock.json`,
+          import.meta.url,
+        ),
+        'utf8',
+      ),
+    ),
+  };
+}
+const suites = await Promise.all(['v2', 'v3'].map(loadSuite));
+for (const { text, dataset, lock } of suites) {
+  assert.equal(dataset.cases.length, 12);
+  assert.equal(new Set(dataset.cases.map((item) => item.id)).size, 12);
+  assert.equal(dataset.status, 'AUTHORIZED_FOR_AUTOMATIC_GLM_EVALUATION');
+  assert.equal(dataset.version, lock.version);
+  assert.equal(
+    createHash('sha256').update(text).digest('hex'),
+    lock.datasetSha256,
+  );
+  assert.deepEqual(
+    Object.values(lock.batches).flat().sort(),
+    dataset.cases.map((item) => item.id).sort(),
+  );
+}
+const [{ text, dataset }, { text: holdoutText, dataset: holdout }] = suites;
 const original = JSON.stringify(mockDatabase);
-for (const sample of dataset.cases) {
+for (const sample of [...dataset.cases, ...holdout.cases]) {
   const prepared = prepareCandidate(sample);
   assert.deepEqual(Object.keys(prepared.case).sort(), [
     'caseId',
@@ -65,13 +78,13 @@ for (const sample of dataset.cases) {
   prepared.database.transactions.length = 0;
   assert.ok(again.database.transactions.length > 0);
 }
-assert.throws(() => assertInvestigationProviderAllowed('glm', 'EVAL-V3-001'), {
+assert.throws(() => assertInvestigationProviderAllowed('glm', 'EVAL-V4-001'), {
   code: 'CASE_DATA_TRANSMISSION_PAUSED',
 });
 assert.equal(JSON.stringify(mockDatabase), original);
 let passed = 1;
 console.log(
-  'PASS 12 candidate fixtures are isolated, expectation-free model inputs and authorized only for GLM evaluation',
+  'PASS 24 candidate fixtures are isolated, expectation-free model inputs and authorized only for GLM evaluation',
 );
 function test(name, fn) {
   fn();
@@ -169,6 +182,32 @@ test('materialized candidates actually apply missing data and amount changes', (
     2000.01,
   );
 });
+test('V3 holdout materializes boundary amounts and preserves customer-loan isolation', () => {
+  const boundary = prepareCandidate(
+    holdout.cases.find((item) => item.id === 'EVAL-V3-001'),
+  );
+  assert.equal(
+    boundary.database.transactions.find(
+      (item) => item.transactionId === 'TXN-8159',
+    ).amount,
+    2000,
+  );
+  const crossCustomer = prepareCandidate(
+    holdout.cases.find((item) => item.id === 'EVAL-V3-010'),
+  );
+  assert.equal(
+    runReadOnlyTool(
+      'get_loan_contract',
+      {
+        customerId: crossCustomer.case.customerId,
+        loanId: crossCustomer.case.loanId,
+      },
+      'fact_rule_investigator',
+      crossCustomer.database,
+    ).status,
+    'NOT_FOUND',
+  );
+});
 const stable = await investigateCase('CMP-2026-09002');
 test('stable waiting-for-reversal workflow is approval-ready without claiming completion', () => {
   assert.equal(stable.recommendation.state, 'PENDING_APPROVAL');
@@ -180,8 +219,11 @@ assert.equal(requests, 0);
 console.log(
   JSON.stringify({
     checks: passed,
-    candidateCount: 12,
-    candidateSha256: createHash('sha256').update(text).digest('hex'),
+    candidateCount: 24,
+    candidateSha256: {
+      v2: createHash('sha256').update(text).digest('hex'),
+      v3: createHash('sha256').update(holdoutText).digest('hex'),
+    },
     modelEvaluation: 'NOT_RUN',
     networkAttempts: requests,
   }),

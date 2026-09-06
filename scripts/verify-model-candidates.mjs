@@ -7,20 +7,24 @@ import { prepareCandidate } from './model-candidate-fixtures.mjs';
 const { investigateSyntheticCaseForEvaluation } =
   await import('../lib/server/pipeline-orchestrator.ts');
 
-const batchName = process.argv[2];
+const [firstArgument, secondArgument] = process.argv.slice(2);
+const suite = /^v[23]$/.test(firstArgument ?? '') ? firstArgument : 'v2';
+const batchName = suite === firstArgument ? secondArgument : firstArgument;
 assert.ok(batchName, 'Provide a frozen batch name such as batch-1');
+const datasetBaseName = `model-candidates-${suite}`;
 const datasetText = await readFile(
-  new URL('../evals/model-candidates-v2.json', import.meta.url),
+  new URL(`../evals/${datasetBaseName}.json`, import.meta.url),
   'utf8',
 );
 const dataset = JSON.parse(datasetText);
 const lock = JSON.parse(
   await readFile(
-    new URL('../evals/model-candidates-v2.lock.json', import.meta.url),
+    new URL(`../evals/${datasetBaseName}.lock.json`, import.meta.url),
     'utf8',
   ),
 );
 assert.equal(dataset.status, 'AUTHORIZED_FOR_AUTOMATIC_GLM_EVALUATION');
+assert.equal(dataset.version, lock.version);
 assert.equal(
   createHash('sha256').update(datasetText).digest('hex'),
   lock.datasetSha256,
@@ -31,7 +35,9 @@ const selectedIds =
 assert.ok(selectedIds, `Unknown frozen batch: ${batchName}`);
 assert.ok(selectedIds.length >= 1 && selectedIds.length <= 3);
 const evaluationKind = Object.hasOwn(lock.batches, batchName)
-  ? 'FROZEN_BASELINE'
+  ? suite === 'v3'
+    ? 'FROZEN_HOLDOUT'
+    : 'FROZEN_BASELINE'
   : 'DEVELOPMENT_REGRESSION';
 const implementationFiles = [
   '../lib/server/agent-prompts.ts',
@@ -124,6 +130,11 @@ function publicResult(result) {
     recommendationState: result.recommendation.state,
     conflict: result.conflict,
     rationale: result.recommendation.rationale,
+    evidenceSynopsis: result.evidence.map((item) => ({
+      evidenceId: item.evidenceId,
+      sourceRecordId: item.sourceRecordId,
+      claim: item.claim,
+    })),
     evidenceCount: result.evidence.length,
     toolCalls: result.toolTraces.map((trace) => ({
       name: trace.name,
@@ -193,7 +204,7 @@ for (const id of selectedIds) {
 }
 
 const report = {
-  version: 'glm-candidates-v2-frozen-batch-1',
+  version: `glm-candidates-${suite}-frozen-batch-1`,
   batchName,
   evaluationKind,
   datasetVersion: dataset.version,
@@ -249,7 +260,7 @@ const report = {
 const outputDirectory = new URL('../../evals/results/', import.meta.url);
 await mkdir(outputDirectory, { recursive: true });
 const output = new URL(
-  `glm-candidates-v2-${batchName}-${Date.now()}.json`,
+  `glm-candidates-${suite}-${batchName}-${Date.now()}.json`,
   outputDirectory,
 );
 await writeFile(output, `${JSON.stringify(report, null, 2)}\n`, 'utf8');

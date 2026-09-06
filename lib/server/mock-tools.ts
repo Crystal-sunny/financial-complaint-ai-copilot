@@ -95,12 +95,22 @@ export function runReadOnlyTool(
       );
     case 'get_loan_contract':
       return asResponse(
-        database.loans.find((item) => item.loanId === args.loanId),
+        database.loans.find(
+          (item) =>
+            item.loanId === args.loanId && item.customerId === args.customerId,
+        ),
       );
-    case 'get_repayment_plan':
+    case 'get_repayment_plan': {
+      const ownsLoan = database.loans.some(
+        (item) =>
+          item.loanId === args.loanId && item.customerId === args.customerId,
+      );
       return asResponse(
-        database.schedules.filter((item) => item.loanId === args.loanId),
+        ownsLoan
+          ? database.schedules.filter((item) => item.loanId === args.loanId)
+          : null,
       );
+    }
     case 'get_payment_transactions':
       return asResponse(
         database.transactions.filter(
@@ -113,7 +123,8 @@ export function runReadOnlyTool(
     case 'get_early_repayment_requests':
       return asResponse(
         database.earlyRepaymentRequests.filter(
-          (item) => item.loanId === args.loanId,
+          (item) =>
+            item.loanId === args.loanId && item.customerId === args.customerId,
         ),
       );
     case 'get_support_tickets':

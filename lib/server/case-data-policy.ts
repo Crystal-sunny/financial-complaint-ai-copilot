@@ -12,7 +12,7 @@ const authorizedCaseIds = new Set([
 function isRegisteredSyntheticCase(caseId: string) {
   return (
     authorizedCaseIds.has(caseId) ||
-    /^EVAL-V2-(?:00[1-9]|01[0-2])$/.test(caseId)
+    /^EVAL-V(?:2|3)-(?:00[1-9]|01[0-2])$/.test(caseId)
   );
 }
 
