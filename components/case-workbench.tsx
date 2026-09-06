@@ -31,6 +31,14 @@ import {
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import {
+  Popover,
+  PopoverContent,
+  PopoverHeader,
+  PopoverTitle,
+  PopoverTrigger,
+} from '@/components/ui/popover';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import type { Evidence, InvestigationResult } from '@/lib/domain';
 
@@ -105,7 +113,11 @@ const cases: CaseView[] = [
 
 const runStages = [
   { label: '案件协调', detail: '识别诉求、业务类型与风险', icon: Bot },
-  { label: '事实与规则调查', detail: '调用八个服务端只读工具', icon: ScanSearch },
+  {
+    label: '事实与规则调查',
+    detail: '调用八个服务端只读工具',
+    icon: ScanSearch,
+  },
   { label: '处置与合规审查', detail: '生成有证据约束的建议', icon: Gavel },
 ];
 
@@ -145,62 +157,130 @@ function formatEvidenceTime(value: string) {
 
 export function CaseWorkbench() {
   const [selectedId, setSelectedId] = useState(cases[0].id);
-  const [result, setResult] = useState<InvestigationResult | null>(null);
-  const [runStep, setRunStep] = useState(-1);
-  const [isRunning, setIsRunning] = useState(false);
-  const [decision, setDecision] = useState<DecisionState>('idle');
-  const [selectedEvidenceId, setSelectedEvidenceId] = useState<string | null>(null);
-  const [showAudit, setShowAudit] = useState(false);
+  const [resultsByCase, setResultsByCase] = useState<
+    Record<string, InvestigationResult>
+  >({});
+  const [runStepsByCase, setRunStepsByCase] = useState<Record<string, number>>(
+    {},
+  );
+  const [runningCaseId, setRunningCaseId] = useState<string | null>(null);
+  const [decisionsByCase, setDecisionsByCase] = useState<
+    Record<string, DecisionState>
+  >({});
+  const [evidenceByCase, setEvidenceByCase] = useState<
+    Record<string, string | null>
+  >({});
+  const [auditByCase, setAuditByCase] = useState<Record<string, boolean>>({});
+  const [errorsByCase, setErrorsByCase] = useState<
+    Record<string, string | null>
+  >({});
   const [copied, setCopied] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [queueFilter, setQueueFilter] = useState<
+    'all' | 'pending' | 'review' | 'completed' | 'high'
+  >('all');
+  const [todayOpen, setTodayOpen] = useState(false);
+  const [filterOpen, setFilterOpen] = useState(false);
 
   const selectedCase = cases.find((item) => item.id === selectedId) ?? cases[0];
+  const result = resultsByCase[selectedId] ?? null;
+  const runStep = runStepsByCase[selectedId] ?? -1;
+  const isRunning = runningCaseId === selectedId;
+  const decision = decisionsByCase[selectedId] ?? 'idle';
+  const selectedEvidenceId = evidenceByCase[selectedId] ?? null;
+  const showAudit = auditByCase[selectedId] ?? false;
+  const error = errorsByCase[selectedId] ?? null;
   const selectedEvidence = useMemo(
-    () => result?.evidence.find((item) => item.evidenceId === selectedEvidenceId) ?? null,
+    () =>
+      result?.evidence.find((item) => item.evidenceId === selectedEvidenceId) ??
+      null,
     [result, selectedEvidenceId],
+  );
+
+  const filteredCases = useMemo(() => {
+    const normalizedQuery = searchQuery.trim().toLowerCase();
+    return cases.filter((item) => {
+      const itemDecision = decisionsByCase[item.id] ?? 'idle';
+      const hasResult = Boolean(resultsByCase[item.id]);
+      const matchesQuery =
+        !normalizedQuery ||
+        `${item.id} ${item.title} ${item.customer}`
+          .toLowerCase()
+          .includes(normalizedQuery);
+      const matchesFilter =
+        queueFilter === 'all' ||
+        (queueFilter === 'pending' && itemDecision !== 'replied') ||
+        (queueFilter === 'review' && hasResult && itemDecision === 'idle') ||
+        (queueFilter === 'completed' && itemDecision === 'replied') ||
+        (queueFilter === 'high' && item.risk === 'HIGH');
+      return matchesQuery && matchesFilter;
+    });
+  }, [decisionsByCase, queueFilter, resultsByCase, searchQuery]);
+
+  const pendingCases = cases.filter(
+    (item) => decisionsByCase[item.id] !== 'replied',
   );
 
   function selectCase(caseId: string) {
     setSelectedId(caseId);
-    setResult(null);
-    setRunStep(-1);
-    setDecision('idle');
-    setSelectedEvidenceId(null);
-    setShowAudit(false);
     setCopied(false);
-    setError(null);
+    setTodayOpen(false);
   }
 
   async function runInvestigation() {
-    setError(null);
-    setResult(null);
-    setDecision('idle');
-    setSelectedEvidenceId(null);
-    setShowAudit(false);
-    setIsRunning(true);
-    setRunStep(0);
+    if (runningCaseId) return;
+    const caseId = selectedCase.id;
+    setErrorsByCase((current) => ({ ...current, [caseId]: null }));
+    setDecisionsByCase((current) => ({ ...current, [caseId]: 'idle' }));
+    setAuditByCase((current) => ({ ...current, [caseId]: false }));
+    setRunningCaseId(caseId);
+    setRunStepsByCase((current) => ({ ...current, [caseId]: 0 }));
 
     try {
-      const request = fetch(`/api/cases/${selectedCase.id}/investigate`, {
+      const request = fetch(`/api/cases/${caseId}/investigate`, {
         method: 'POST',
       });
       await new Promise((resolve) => setTimeout(resolve, 420));
-      setRunStep(1);
+      setRunStepsByCase((current) => ({ ...current, [caseId]: 1 }));
       await new Promise((resolve) => setTimeout(resolve, 580));
-      setRunStep(2);
+      setRunStepsByCase((current) => ({ ...current, [caseId]: 2 }));
       const response = await request;
       if (!response.ok) throw new Error('调查服务暂时不可用');
       const data = (await response.json()) as InvestigationResult;
       await new Promise((resolve) => setTimeout(resolve, 520));
-      setResult(data);
-      setSelectedEvidenceId(data.evidence[0]?.evidenceId ?? null);
-      setRunStep(3);
+      setResultsByCase((current) => ({ ...current, [caseId]: data }));
+      setEvidenceByCase((current) => ({
+        ...current,
+        [caseId]: current[caseId] ?? data.evidence[0]?.evidenceId ?? null,
+      }));
+      setRunStepsByCase((current) => ({ ...current, [caseId]: 3 }));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : '调查运行失败');
-      setRunStep(-1);
+      setErrorsByCase((current) => ({
+        ...current,
+        [caseId]: cause instanceof Error ? cause.message : '调查运行失败',
+      }));
+      setRunStepsByCase((current) => ({ ...current, [caseId]: -1 }));
     } finally {
-      setIsRunning(false);
+      setRunningCaseId(null);
     }
+  }
+
+  function updateDecision(nextDecision: DecisionState) {
+    setDecisionsByCase((current) => ({
+      ...current,
+      [selectedId]: nextDecision,
+    }));
+  }
+
+  function updateEvidence(evidenceId: string) {
+    setEvidenceByCase((current) => ({ ...current, [selectedId]: evidenceId }));
+  }
+
+  function toggleAudit() {
+    setAuditByCase((current) => ({
+      ...current,
+      [selectedId]: !current[selectedId],
+    }));
   }
 
   async function copyDraft() {
@@ -215,11 +295,17 @@ export function CaseWorkbench() {
   }
 
   const recommendationBadge =
-    result?.recommendation.state === 'MANDATORY_ESCALATION'
-      ? '强制升级'
-      : result?.recommendation.state === 'NEEDS_INFORMATION'
-        ? '待复核'
-        : '待审批';
+    decision === 'replied'
+      ? '已回复'
+      : decision === 'approved'
+        ? '已批准'
+        : decision === 'returned'
+          ? '待补充'
+          : result?.recommendation.state === 'MANDATORY_ESCALATION'
+            ? '强制升级'
+            : result?.recommendation.state === 'NEEDS_INFORMATION'
+              ? '待复核'
+              : '待审批';
 
   return (
     <main className="h-screen min-h-[720px] overflow-hidden bg-background">
@@ -227,31 +313,82 @@ export function CaseWorkbench() {
         <div className="flex items-center gap-3">
           <BrandMark />
           <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-[15px] font-semibold tracking-tight text-slate-900">
-                金融客诉智能协同工作台
-              </h1>
-              <Badge
-                variant="secondary"
-                className="bg-teal-50 text-[10px] text-teal-800 ring-1 ring-teal-700/10"
-              >
-                DEMO · 模拟数据
-              </Badge>
-            </div>
-            <p className="mt-0.5 text-[11px] text-slate-500">证据驱动调查 · 人工审批闭环</p>
+            <h1 className="text-[15px] font-semibold tracking-tight text-slate-900">
+              金融客诉智能协同工作台
+            </h1>
+            <p className="mt-0.5 text-[11px] text-slate-500">
+              证据驱动调查 · 人工审批闭环
+            </p>
           </div>
         </div>
 
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2 rounded-lg border bg-slate-50 px-3 py-2 text-xs text-slate-600">
-            <Clock3 className="size-3.5 text-amber-600" />
-            今日待处理 <span className="font-semibold text-slate-900">8</span>
-          </div>
-          <Button variant="outline" className="h-9 px-3 text-xs">
+          <Popover open={todayOpen} onOpenChange={setTodayOpen}>
+            <PopoverTrigger
+              render={<Button variant="outline" className="h-9 px-3 text-xs" />}
+            >
+              <Clock3 data-icon="inline-start" className="text-amber-600" />
+              今日待处理{' '}
+              <span className="font-semibold text-slate-900">
+                {pendingCases.length}
+              </span>
+              <ChevronDown data-icon="inline-end" />
+            </PopoverTrigger>
+            <PopoverContent align="end" sideOffset={8} className="w-72 p-3">
+              <PopoverHeader className="border-b pb-2">
+                <PopoverTitle className="text-xs">今日案件概览</PopoverTitle>
+              </PopoverHeader>
+              <div className="space-y-1">
+                {cases.map((item) => {
+                  const itemDecision = decisionsByCase[item.id] ?? 'idle';
+                  const itemStatus =
+                    itemDecision === 'replied'
+                      ? '已回复'
+                      : itemDecision === 'approved'
+                        ? '已批准'
+                        : itemDecision === 'returned'
+                          ? '待补充'
+                          : resultsByCase[item.id]
+                            ? '待人工处理'
+                            : runningCaseId === item.id
+                              ? '调查中'
+                              : '待调查';
+                  return (
+                    <Button
+                      key={item.id}
+                      variant="ghost"
+                      onClick={() => selectCase(item.id)}
+                      className="h-auto w-full justify-between px-2 py-2 text-left"
+                    >
+                      <span className="min-w-0">
+                        <span className="block truncate text-[11px] font-medium text-slate-800">
+                          {item.title}
+                        </span>
+                        <span className="mt-0.5 block font-mono text-[9px] text-slate-400">
+                          {item.id}
+                        </span>
+                      </span>
+                      <span
+                        className={`ml-3 text-[10px] font-medium ${
+                          itemStatus === '已回复'
+                            ? 'text-emerald-700'
+                            : itemStatus === '已批准'
+                              ? 'text-teal-700'
+                              : 'text-amber-700'
+                        }`}
+                      >
+                        {itemStatus}
+                      </span>
+                    </Button>
+                  );
+                })}
+              </div>
+            </PopoverContent>
+          </Popover>
+          <div className="flex h-9 items-center gap-2 rounded-lg border bg-white px-3 text-xs text-slate-700">
             <UserRound data-icon="inline-start" />
             审核员 · 王晨
-            <ChevronDown data-icon="inline-end" />
-          </Button>
+          </div>
         </div>
       </header>
 
@@ -261,22 +398,89 @@ export function CaseWorkbench() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-xs font-semibold text-slate-900">案件队列</p>
-                <p className="mt-0.5 text-[11px] text-slate-500">按风险与 SLA 排序</p>
+                <p className="mt-0.5 text-[11px] text-slate-500">
+                  按风险与 SLA 排序
+                </p>
               </div>
-              <Button variant="outline" size="icon-sm" aria-label="筛选案件">
-                <ListFilter />
-              </Button>
+              <Popover open={filterOpen} onOpenChange={setFilterOpen}>
+                <PopoverTrigger
+                  render={
+                    <Button
+                      variant={queueFilter === 'all' ? 'outline' : 'secondary'}
+                      size="icon-sm"
+                      aria-label="筛选案件"
+                    />
+                  }
+                >
+                  <ListFilter />
+                </PopoverTrigger>
+                <PopoverContent align="end" sideOffset={6} className="w-44 p-2">
+                  <PopoverHeader className="px-2 pb-1">
+                    <PopoverTitle className="text-[11px]">
+                      队列筛选
+                    </PopoverTitle>
+                  </PopoverHeader>
+                  {[
+                    ['all', '全部案件'],
+                    ['pending', '待处理'],
+                    ['review', '待人工审核'],
+                    ['completed', '已完成'],
+                    ['high', '高风险'],
+                  ].map(([value, label]) => (
+                    <Button
+                      key={value}
+                      variant={queueFilter === value ? 'secondary' : 'ghost'}
+                      onClick={() => {
+                        setQueueFilter(
+                          value as
+                            | 'all'
+                            | 'pending'
+                            | 'review'
+                            | 'completed'
+                            | 'high',
+                        );
+                        setFilterOpen(false);
+                      }}
+                      className="h-8 w-full justify-between px-2 text-[11px]"
+                    >
+                      {label}
+                      {queueFilter === value && (
+                        <Check data-icon="inline-end" />
+                      )}
+                    </Button>
+                  ))}
+                </PopoverContent>
+              </Popover>
             </div>
-            <div className="mt-3 flex h-9 items-center gap-2 rounded-lg border bg-white px-3 text-xs text-slate-400">
-              <Search className="size-3.5" />
-              搜索案件号或客户
+            <div className="relative mt-3">
+              <Search className="pointer-events-none absolute left-3 top-1/2 z-10 size-3.5 -translate-y-1/2 text-slate-400" />
+              <Input
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="搜索案件号或客户"
+                aria-label="搜索案件"
+                className="h-9 bg-white pl-8 text-xs"
+              />
             </div>
           </div>
 
           <ScrollArea className="min-h-0 flex-1">
             <div className="space-y-2 p-3">
-              {cases.map((item) => {
+              {filteredCases.map((item) => {
                 const active = item.id === selectedId;
+                const itemDecision = decisionsByCase[item.id] ?? 'idle';
+                const itemStatus =
+                  itemDecision === 'replied'
+                    ? '已回复'
+                    : itemDecision === 'approved'
+                      ? '已批准'
+                      : itemDecision === 'returned'
+                        ? '待补充'
+                        : resultsByCase[item.id]
+                          ? '待人工处理'
+                          : runningCaseId === item.id
+                            ? '调查中'
+                            : item.priority;
                 return (
                   <button
                     key={item.id}
@@ -289,30 +493,61 @@ export function CaseWorkbench() {
                     }`}
                   >
                     <div className="flex items-center justify-between gap-2">
-                      <span className="font-mono text-[10px] font-medium text-slate-500">{item.id}</span>
-                      {active && <CircleDot className="size-3.5 text-teal-600" />}
+                      <span className="font-mono text-[10px] font-medium text-slate-500">
+                        {item.id}
+                      </span>
+                      {active && (
+                        <CircleDot className="size-3.5 text-teal-600" />
+                      )}
                     </div>
-                    <p className="mt-2 text-[13px] font-semibold text-slate-900">{item.title}</p>
+                    <p className="mt-2 text-[13px] font-semibold text-slate-900">
+                      {item.title}
+                    </p>
                     <p className="mt-1 text-[11px] text-slate-500">
                       {item.customer} · {item.customerMeta}
                     </p>
                     <div className="mt-3 flex items-center justify-between">
                       <span
                         className={`rounded-md px-1.5 py-1 text-[10px] font-medium ${
-                          item.risk === 'HIGH'
-                            ? 'bg-rose-50 text-rose-700'
-                            : item.priority === '高优先级'
-                              ? 'bg-amber-50 text-amber-700'
-                              : 'bg-slate-100 text-slate-600'
+                          itemStatus === '已回复'
+                            ? 'bg-emerald-50 text-emerald-700'
+                            : itemStatus === '已批准'
+                              ? 'bg-teal-50 text-teal-700'
+                              : item.risk === 'HIGH'
+                                ? 'bg-rose-50 text-rose-700'
+                                : item.priority === '高优先级'
+                                  ? 'bg-amber-50 text-amber-700'
+                                  : 'bg-slate-100 text-slate-600'
                         }`}
                       >
-                        {item.priority}
+                        {itemStatus}
                       </span>
-                      <span className="text-[10px] text-slate-400">{item.age}</span>
+                      <span className="text-[10px] text-slate-400">
+                        {item.age}
+                      </span>
                     </div>
                   </button>
                 );
               })}
+              {filteredCases.length === 0 && (
+                <div className="px-3 py-10 text-center">
+                  <Search className="mx-auto size-4 text-slate-300" />
+                  <p className="mt-2 text-[11px] text-slate-400">
+                    没有符合条件的案件
+                  </p>
+                  <Button
+                    variant="link"
+                    size="xs"
+                    onClick={() => {
+                      setSearchQuery('');
+                      setQueueFilter('all');
+                    }}
+                    className="mt-1 text-[10px]"
+                  >
+                    清除筛选
+                  </Button>
+                </div>
+              )}
             </div>
           </ScrollArea>
 
@@ -338,7 +573,11 @@ export function CaseWorkbench() {
                         {selectedCase.id}
                       </span>
                       <Badge
-                        variant={selectedCase.risk === 'HIGH' ? 'destructive' : 'secondary'}
+                        variant={
+                          selectedCase.risk === 'HIGH'
+                            ? 'destructive'
+                            : 'secondary'
+                        }
                         className={
                           selectedCase.risk === 'HIGH'
                             ? 'bg-rose-50 text-rose-700'
@@ -361,12 +600,15 @@ export function CaseWorkbench() {
                       {selectedCase.title}
                     </h2>
                     <p className="mt-1.5 text-xs text-slate-500">
-                      {selectedCase.type} · {selectedCase.channel} · {selectedCase.receivedAt}
+                      {selectedCase.type} · {selectedCase.channel} ·{' '}
+                      {selectedCase.receivedAt}
                     </p>
                   </div>
                   <div className="grid shrink-0 grid-cols-2 gap-x-6 gap-y-1.5 rounded-lg border bg-slate-50 px-4 py-3 text-[11px]">
                     <span className="text-slate-500">客户</span>
-                    <span className="font-medium text-slate-800">{selectedCase.customer}</span>
+                    <span className="font-medium text-slate-800">
+                      {selectedCase.customer}
+                    </span>
                     <span className="text-slate-500">业务标识</span>
                     <span className="font-mono font-medium text-slate-800">
                       {selectedCase.loanId ?? 'WALLET-1003'}
@@ -385,9 +627,13 @@ export function CaseWorkbench() {
                     <div className="flex items-center justify-between border-b px-5 py-3.5">
                       <div className="flex items-center gap-2">
                         <UserRound className="size-4 text-teal-700" />
-                        <h3 className="text-sm font-semibold text-slate-900">客户陈述</h3>
+                        <h3 className="text-sm font-semibold text-slate-900">
+                          客户陈述
+                        </h3>
                       </div>
-                      <span className="text-[10px] text-slate-400">未经核验的原始主张</span>
+                      <span className="text-[10px] text-slate-400">
+                        未经核验的原始主张
+                      </span>
                     </div>
                     <div className="p-5">
                       <blockquote className="border-l-2 border-teal-600/50 pl-3 text-xs leading-[1.75] text-slate-600">
@@ -411,7 +657,9 @@ export function CaseWorkbench() {
                       <div className="flex items-center justify-between border-b px-5 py-3.5">
                         <div className="flex items-center gap-2">
                           <FileCheck2 className="size-4 text-teal-700" />
-                          <h3 className="text-sm font-semibold text-slate-900">事实时间线</h3>
+                          <h3 className="text-sm font-semibold text-slate-900">
+                            事实时间线
+                          </h3>
                         </div>
                         <span className="text-[10px] text-slate-400">
                           {result.evidence.length} 项关键证据 · 点击查看原文
@@ -420,14 +668,17 @@ export function CaseWorkbench() {
                       <div className="p-5">
                         <div className="relative space-y-5 before:absolute before:bottom-2 before:left-[5px] before:top-2 before:w-px before:bg-slate-200">
                           {result.evidence.map((event) => {
-                            const active = selectedEvidenceId === event.evidenceId;
+                            const active =
+                              selectedEvidenceId === event.evidenceId;
                             return (
                               <button
                                 key={event.evidenceId}
                                 type="button"
-                                onClick={() => setSelectedEvidenceId(event.evidenceId)}
+                                onClick={() => updateEvidence(event.evidenceId)}
                                 className={`relative grid w-full grid-cols-[12px_82px_1fr] gap-3 rounded-lg text-left transition-colors ${
-                                  active ? 'bg-teal-50/70 py-2 pr-2 ring-1 ring-teal-700/10' : 'hover:bg-slate-50'
+                                  active
+                                    ? 'bg-teal-50/70 py-2 pr-2 ring-1 ring-teal-700/10'
+                                    : 'hover:bg-slate-50'
                                 }`}
                               >
                                 <EvidenceDot tone={event.tone} />
@@ -435,10 +686,15 @@ export function CaseWorkbench() {
                                   {formatEvidenceTime(event.observedAt)}
                                 </time>
                                 <div>
-                                  <p className="text-xs font-semibold text-slate-800">{event.title}</p>
-                                  <p className="mt-1 text-[11px] leading-[1.55] text-slate-500">{event.claim}</p>
+                                  <p className="text-xs font-semibold text-slate-800">
+                                    {event.title}
+                                  </p>
+                                  <p className="mt-1 text-[11px] leading-[1.55] text-slate-500">
+                                    {event.claim}
+                                  </p>
                                   <span className="mt-1.5 inline-flex items-center gap-1 text-[10px] font-medium text-teal-700">
-                                    {event.sourceRecordId} <ArrowRight className="size-3" />
+                                    {event.sourceRecordId}{' '}
+                                    <ArrowRight className="size-3" />
                                   </span>
                                 </div>
                               </button>
@@ -449,9 +705,12 @@ export function CaseWorkbench() {
                         {selectedEvidence && (
                           <div className="mt-5 rounded-lg border border-teal-700/15 bg-teal-50/50 p-3">
                             <div className="flex items-center justify-between gap-3">
-                              <span className="text-[10px] font-semibold text-teal-800">证据原文</span>
+                              <span className="text-[10px] font-semibold text-teal-800">
+                                证据原文
+                              </span>
                               <span className="font-mono text-[9px] text-teal-700/70">
-                                {selectedEvidence.sourceSystem} · {selectedEvidence.sourceRecordId}
+                                {selectedEvidence.sourceSystem} ·{' '}
+                                {selectedEvidence.sourceRecordId}
                               </span>
                             </div>
                             <p className="mt-2 font-mono text-[10px] leading-5 text-slate-600">
@@ -464,7 +723,9 @@ export function CaseWorkbench() {
                   ) : (
                     <div className="rounded-xl border border-dashed bg-white/60 px-6 py-10 text-center">
                       <Database className="mx-auto size-5 text-slate-400" />
-                      <p className="mt-3 text-xs font-medium text-slate-600">事实证据尚未加载</p>
+                      <p className="mt-3 text-xs font-medium text-slate-600">
+                        事实证据尚未加载
+                      </p>
                       <p className="mt-1 text-[10px] text-slate-400">
                         启动调查后，服务端工具会返回脱敏记录与稳定证据 ID。
                       </p>
@@ -475,7 +736,7 @@ export function CaseWorkbench() {
                     <div className="rounded-xl border bg-white">
                       <button
                         type="button"
-                        onClick={() => setShowAudit((value) => !value)}
+                        onClick={toggleAudit}
                         className="flex w-full items-center justify-between px-5 py-3.5 text-left"
                       >
                         <span className="flex items-center gap-2 text-xs font-semibold text-slate-800">
@@ -483,7 +744,9 @@ export function CaseWorkbench() {
                           审计记录与工具轨迹
                         </span>
                         <span className="text-[10px] font-medium text-teal-700">
-                          {showAudit ? '收起' : `查看 ${result.toolTraces.length} 次调用`}
+                          {showAudit
+                            ? '收起'
+                            : `查看 ${result.toolTraces.length} 次调用`}
                         </span>
                       </button>
                       {showAudit && (
@@ -495,12 +758,18 @@ export function CaseWorkbench() {
                                 className="flex items-center justify-between rounded-lg border bg-slate-50 px-3 py-2"
                               >
                                 <div className="min-w-0">
-                                  <p className="truncate text-[10px] font-medium text-slate-700">{trace.label}</p>
-                                  <p className="mt-0.5 font-mono text-[8px] text-slate-400">{trace.name}</p>
+                                  <p className="truncate text-[10px] font-medium text-slate-700">
+                                    {trace.label}
+                                  </p>
+                                  <p className="mt-0.5 font-mono text-[8px] text-slate-400">
+                                    {trace.name}
+                                  </p>
                                 </div>
                                 <span
                                   className={`ml-2 text-[9px] font-semibold ${
-                                    trace.status === 'OK' ? 'text-emerald-700' : 'text-slate-400'
+                                    trace.status === 'OK'
+                                      ? 'text-emerald-700'
+                                      : 'text-slate-400'
                                   }`}
                                 >
                                   {trace.status} · {trace.recordCount}
@@ -510,10 +779,19 @@ export function CaseWorkbench() {
                           </div>
                           <div className="mt-4 space-y-2 border-l border-slate-200 pl-3">
                             {result.auditEvents.map((event) => (
-                              <div key={`${event.at}-${event.actor}`} className="flex gap-3 text-[10px]">
-                                <time className="font-mono text-slate-400">{event.at}</time>
-                                <span className="font-medium text-slate-700">{event.actor}</span>
-                                <span className="text-slate-500">{event.action}</span>
+                              <div
+                                key={`${event.at}-${event.actor}`}
+                                className="flex gap-3 text-[10px]"
+                              >
+                                <time className="font-mono text-slate-400">
+                                  {event.at}
+                                </time>
+                                <span className="font-medium text-slate-700">
+                                  {event.actor}
+                                </span>
+                                <span className="text-slate-500">
+                                  {event.action}
+                                </span>
                               </div>
                             ))}
                           </div>
@@ -527,7 +805,9 @@ export function CaseWorkbench() {
                   <div className="rounded-xl border bg-white p-4 shadow-[0_6px_24px_rgb(15_23_42/4%)]">
                     <div className="flex items-center gap-2">
                       <Bot className="size-4 text-teal-700" />
-                      <h3 className="text-sm font-semibold text-slate-900">AI 协同调查</h3>
+                      <h3 className="text-sm font-semibold text-slate-900">
+                        AI 协同调查
+                      </h3>
                     </div>
                     <p className="mt-2 text-[11px] leading-[1.6] text-slate-500">
                       三个角色按顺序完成分类、证据核验和合规建议。
@@ -560,8 +840,12 @@ export function CaseWorkbench() {
                                 )}
                               </div>
                               <div className="min-w-0">
-                                <p className="text-[10px] font-semibold text-slate-700">{stage.label}</p>
-                                <p className="truncate text-[9px] text-slate-400">{stage.detail}</p>
+                                <p className="text-[10px] font-semibold text-slate-700">
+                                  {stage.label}
+                                </p>
+                                <p className="truncate text-[9px] text-slate-400">
+                                  {stage.detail}
+                                </p>
                               </div>
                             </div>
                           );
@@ -570,61 +854,88 @@ export function CaseWorkbench() {
                     )}
 
                     {error && (
-                      <div className="mt-3 rounded-lg bg-rose-50 p-2.5 text-[10px] text-rose-700">{error}</div>
+                      <div className="mt-3 rounded-lg bg-rose-50 p-2.5 text-[10px] text-rose-700">
+                        {error}
+                      </div>
                     )}
 
                     <Button
                       onClick={runInvestigation}
-                      disabled={isRunning}
+                      disabled={Boolean(runningCaseId)}
                       className="mt-4 h-9 w-full justify-between px-3 text-xs"
                     >
-                      {isRunning ? '调查进行中…' : result ? '重新运行调查' : '开始 AI 调查'}
+                      {isRunning
+                        ? '调查进行中…'
+                        : runningCaseId
+                          ? '另一案件调查中…'
+                          : result
+                            ? '重新运行调查'
+                            : '开始 AI 调查'}
                       {isRunning ? (
-                        <LoaderCircle data-icon="inline-end" className="animate-spin" />
+                        <LoaderCircle
+                          data-icon="inline-end"
+                          className="animate-spin"
+                        />
                       ) : result ? (
                         <RotateCcw data-icon="inline-end" />
                       ) : (
                         <ArrowRight data-icon="inline-end" />
                       )}
                     </Button>
-                    <p className="mt-2 text-center text-[10px] text-slate-400">录制结果模式 · 无需 API Key</p>
                   </div>
 
-                  {result ? (
-                    <div
-                      className={`rounded-xl border p-4 ${
-                        result.conflict.status === 'UNRESOLVED'
-                          ? 'border-rose-200 bg-rose-50/70'
-                          : 'border-amber-200 bg-amber-50/70'
-                      }`}
-                    >
-                      <div className="flex items-start gap-2.5">
-                        {result.conflict.status === 'UNRESOLVED' ? (
-                          <ShieldAlert className="mt-0.5 size-4 shrink-0 text-rose-700" />
-                        ) : (
-                          <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-700" />
-                        )}
-                        <div>
-                          <p className="text-xs font-semibold text-slate-900">{result.conflict.title}</p>
-                          <p className="mt-1.5 text-[11px] leading-[1.55] text-slate-600">
-                            {result.conflict.resolution}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="rounded-xl border border-amber-200 bg-amber-50/70 p-4">
-                      <div className="flex items-start gap-2.5">
+                  <div
+                    className={`rounded-xl border p-4 ${
+                      result?.conflict.status === 'UNRESOLVED'
+                        ? 'border-rose-200 bg-rose-50/70'
+                        : result
+                          ? 'border-amber-200 bg-amber-50/70'
+                          : 'border-slate-200 bg-slate-50/80'
+                    }`}
+                  >
+                    <div className="flex items-start gap-2.5">
+                      {result?.conflict.status === 'UNRESOLVED' ? (
+                        <ShieldAlert className="mt-0.5 size-4 shrink-0 text-rose-700" />
+                      ) : result ? (
                         <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-700" />
-                        <div>
-                          <p className="text-xs font-semibold text-amber-900">客户主张不等于事实</p>
-                          <p className="mt-1.5 text-[11px] leading-[1.55] text-amber-800/80">
-                            调查前不预设责任，需要核验账务、交易与规则记录。
+                      ) : (
+                        <ScanSearch className="mt-0.5 size-4 shrink-0 text-slate-500" />
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-xs font-semibold text-slate-900">
+                            调查判断
                           </p>
+                          <Badge
+                            variant="outline"
+                            className={
+                              result?.conflict.status === 'UNRESOLVED'
+                                ? 'border-rose-200 text-rose-700'
+                                : result
+                                  ? 'border-emerald-200 text-emerald-700'
+                                  : 'text-slate-500'
+                            }
+                          >
+                            {result?.conflict.status === 'UNRESOLVED'
+                              ? '需进一步核验'
+                              : result
+                                ? '已形成结论'
+                                : '待核验'}
+                          </Badge>
                         </div>
+                        <p className="mt-2 text-[11px] font-medium text-slate-700">
+                          {result
+                            ? result.conflict.title
+                            : '当前尚无系统核验结论'}
+                        </p>
+                        <p className="mt-1.5 text-[11px] leading-[1.55] text-slate-600">
+                          {result
+                            ? result.conflict.resolution
+                            : '客户陈述已记录，需结合账务、交易和规则记录完成核验。'}
+                        </p>
                       </div>
                     </div>
-                  )}
+                  </div>
 
                   <div className="rounded-xl border bg-white p-4">
                     <div className="flex items-center gap-2 text-xs font-semibold text-slate-900">
@@ -634,7 +945,7 @@ export function CaseWorkbench() {
                     <ul className="mt-3 space-y-2 text-[10px] leading-4 text-slate-500">
                       <li className="flex gap-2">
                         <CheckCircle2 className="mt-0.5 size-3 shrink-0 text-emerald-600" />
-                        仅读取模拟数据，不执行资金操作
+                        仅读取业务数据，不执行资金操作
                       </li>
                       <li className="flex gap-2">
                         <CheckCircle2 className="mt-0.5 size-3 shrink-0 text-emerald-600" />
@@ -662,8 +973,20 @@ export function CaseWorkbench() {
                 </p>
               </div>
               <Badge
-                variant={result?.recommendation.state === 'MANDATORY_ESCALATION' ? 'destructive' : 'outline'}
-                className={result ? 'text-slate-700' : 'text-slate-500'}
+                variant={
+                  result?.recommendation.state === 'MANDATORY_ESCALATION'
+                    ? 'destructive'
+                    : 'outline'
+                }
+                className={
+                  decision === 'replied'
+                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                    : decision === 'approved'
+                      ? 'border-teal-200 bg-teal-50 text-teal-700'
+                      : result
+                        ? 'text-slate-700'
+                        : 'text-slate-500'
+                }
               >
                 {result ? recommendationBadge : '未生成'}
               </Badge>
@@ -688,23 +1011,33 @@ export function CaseWorkbench() {
                   </p>
                   {result.recommendation.amount != null && (
                     <p className="mt-2 font-mono text-xs text-slate-500">
-                      涉及金额 ¥{result.recommendation.amount.toLocaleString('zh-CN', { minimumFractionDigits: 2 })}
+                      涉及金额 ¥
+                      {result.recommendation.amount.toLocaleString('zh-CN', {
+                        minimumFractionDigits: 2,
+                      })}
                     </p>
                   )}
                 </div>
 
                 <div>
-                  <p className="text-[10px] font-semibold text-slate-500">判断依据</p>
+                  <p className="text-[10px] font-semibold text-slate-500">
+                    判断依据
+                  </p>
                   <p className="mt-2 text-[11px] leading-[1.7] text-slate-600">
                     {result.recommendation.rationale}
                   </p>
                 </div>
 
                 <div>
-                  <p className="text-[10px] font-semibold text-slate-500">已确认事实</p>
+                  <p className="text-[10px] font-semibold text-slate-500">
+                    已确认事实
+                  </p>
                   <ul className="mt-2 space-y-2">
                     {result.confirmedFacts.map((fact) => (
-                      <li key={fact} className="flex gap-2 text-[11px] leading-[1.55] text-slate-600">
+                      <li
+                        key={fact}
+                        className="flex gap-2 text-[11px] leading-[1.55] text-slate-600"
+                      >
                         <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-emerald-600" />
                         {fact}
                       </li>
@@ -717,10 +1050,15 @@ export function CaseWorkbench() {
                     <Gavel className="size-3.5 text-teal-700" />
                     {approvalLabels[result.approval.level]}
                   </div>
-                  <p className="mt-1.5 text-[10px] leading-4 text-slate-500">{result.approval.reason}</p>
+                  <p className="mt-1.5 text-[10px] leading-4 text-slate-500">
+                    {result.approval.reason}
+                  </p>
                   <div className="mt-2 flex flex-wrap gap-1">
                     {result.recommendation.ruleIds.map((ruleId) => (
-                      <span key={ruleId} className="rounded bg-white px-1.5 py-1 font-mono text-[8px] text-teal-700 ring-1 ring-slate-200">
+                      <span
+                        key={ruleId}
+                        className="rounded bg-white px-1.5 py-1 font-mono text-[8px] text-teal-700 ring-1 ring-slate-200"
+                      >
                         {ruleId}
                       </span>
                     ))}
@@ -745,18 +1083,29 @@ export function CaseWorkbench() {
                         <ClipboardCheck className="size-4" />
                         客户回复草稿
                       </p>
-                      <Button variant="ghost" size="xs" onClick={copyDraft} className="text-emerald-800">
-                        {copied ? <Check data-icon="inline-start" /> : <Copy data-icon="inline-start" />}
+                      <Button
+                        variant="ghost"
+                        size="xs"
+                        onClick={copyDraft}
+                        className="text-emerald-800"
+                      >
+                        {copied ? (
+                          <Check data-icon="inline-start" />
+                        ) : (
+                          <Copy data-icon="inline-start" />
+                        )}
                         {copied ? '已复制' : '复制'}
                       </Button>
                     </div>
-                    <p className="mt-3 text-[11px] leading-[1.7] text-slate-600">{result.responseDraft}</p>
+                    <p className="mt-3 text-[11px] leading-[1.7] text-slate-600">
+                      {result.responseDraft}
+                    </p>
                   </div>
                 )}
 
                 {decision === 'returned' && (
                   <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-[10px] leading-4 text-amber-800">
-                    已退回事实调查环节；本演示不会自动修改原始证据或执行外部操作。
+                    已退回事实调查环节；系统不会自动修改原始证据或执行外部操作。
                   </div>
                 )}
               </div>
@@ -766,7 +1115,9 @@ export function CaseWorkbench() {
               <div className="grid size-12 place-items-center rounded-2xl bg-slate-100 text-slate-400">
                 <FileCheck2 className="size-5" />
               </div>
-              <p className="mt-4 text-sm font-medium text-slate-700">尚无处置建议</p>
+              <p className="mt-4 text-sm font-medium text-slate-700">
+                尚无处置建议
+              </p>
               <p className="mt-2 max-w-[230px] text-[11px] leading-[1.65] text-slate-400">
                 完成证据调查后，这里将展示责任判断、处理建议、风险边界与回复草稿。
               </p>
@@ -798,7 +1149,10 @@ export function CaseWorkbench() {
             </div>
 
             {decision === 'approved' ? (
-              <Button onClick={() => setDecision('replied')} className="mt-3 h-9 w-full text-xs">
+              <Button
+                onClick={() => updateDecision('replied')}
+                className="mt-3 h-9 w-full text-xs"
+              >
                 <Send data-icon="inline-start" />
                 标记已回复客户
               </Button>
@@ -811,17 +1165,19 @@ export function CaseWorkbench() {
                 <Button
                   disabled={!result || isRunning}
                   variant="outline"
-                  onClick={() => setDecision('returned')}
+                  onClick={() => updateDecision('returned')}
                   className="h-9 text-xs"
                 >
                   退回补充
                 </Button>
                 <Button
                   disabled={!result || isRunning}
-                  onClick={() => setDecision('approved')}
+                  onClick={() => updateDecision('approved')}
                   className="h-9 text-xs"
                 >
-                  {result?.recommendation.state === 'MANDATORY_ESCALATION' ? '批准转办' : '批准建议'}
+                  {result?.recommendation.state === 'MANDATORY_ESCALATION'
+                    ? '批准转办'
+                    : '批准建议'}
                 </Button>
               </div>
             )}

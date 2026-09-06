@@ -28,7 +28,7 @@ export const toolLabels: Record<ToolName, string> = {
   get_early_repayment_requests: '提前还款申请',
   get_support_tickets: '历史客服工单',
   get_account_security_events: '账户安全事件',
-  search_rules: '模拟规则库',
+  search_rules: '规则库',
 };
 
 function asResponse(data: unknown): ToolResponse {
@@ -52,12 +52,18 @@ export function runReadOnlyTool(
   switch (name) {
     case 'get_customer_profile':
       return asResponse(
-        mockDatabase.customers.find((item) => item.customerId === args.customerId),
+        mockDatabase.customers.find(
+          (item) => item.customerId === args.customerId,
+        ),
       );
     case 'get_loan_contract':
-      return asResponse(mockDatabase.loans.find((item) => item.loanId === args.loanId));
+      return asResponse(
+        mockDatabase.loans.find((item) => item.loanId === args.loanId),
+      );
     case 'get_repayment_plan':
-      return asResponse(mockDatabase.schedules.filter((item) => item.loanId === args.loanId));
+      return asResponse(
+        mockDatabase.schedules.filter((item) => item.loanId === args.loanId),
+      );
     case 'get_payment_transactions':
       return asResponse(
         mockDatabase.transactions.filter(
@@ -68,7 +74,9 @@ export function runReadOnlyTool(
       );
     case 'get_early_repayment_requests':
       return asResponse(
-        mockDatabase.earlyRepaymentRequests.filter((item) => item.loanId === args.loanId),
+        mockDatabase.earlyRepaymentRequests.filter(
+          (item) => item.loanId === args.loanId,
+        ),
       );
     case 'get_support_tickets':
       return asResponse(
@@ -80,7 +88,9 @@ export function runReadOnlyTool(
       );
     case 'get_account_security_events':
       return asResponse(
-        mockDatabase.securityEvents.filter((item) => item.customerId === args.customerId),
+        mockDatabase.securityEvents.filter(
+          (item) => item.customerId === args.customerId,
+        ),
       );
     case 'search_rules':
       return asResponse(
@@ -96,7 +106,11 @@ export function traceToolCall(
   response: ToolResponse,
   index: number,
 ): ToolTrace {
-  const recordCount = Array.isArray(response.data) ? response.data.length : response.data ? 1 : 0;
+  const recordCount = Array.isArray(response.data)
+    ? response.data.length
+    : response.data
+      ? 1
+      : 0;
   return {
     name,
     label: toolLabels[name],

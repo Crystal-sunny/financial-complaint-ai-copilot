@@ -3,7 +3,7 @@ import './globals.css';
 
 export const metadata: Metadata = {
   title: '金融客诉智能协同工作台',
-  description: '基于证据链与人工审批的金融客诉调查演示系统',
+  description: '基于证据链与人工审批的金融客诉智能调查系统',
 };
 
 export default function RootLayout({
