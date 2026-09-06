@@ -130,6 +130,38 @@ export function validateInvestigation(
   );
   checks.push(pass('FINANCIAL_ACTION_GATE', '资金建议通过证据门控制'));
 
+  const actionRuleRequirements = {
+    PROPOSE_REFUND: ['RULE-PAY-004', 'RULE-APPROVAL-002'],
+    WAIT_FOR_REVERSAL: ['RULE-PAY-005'],
+    ESCALATE_SECURITY: ['RULE-SECURITY-001', 'RULE-SECURITY-002'],
+  } as const;
+  const requiredActionRules =
+    actionRuleRequirements[
+      result.recommendation.actionCode as keyof typeof actionRuleRequirements
+    ] ?? [];
+  const expectedApproval =
+    result.recommendation.actionCode === 'PROPOSE_REFUND' &&
+    result.recommendation.amount !== null
+      ? result.recommendation.amount <= 2000
+        ? 'L1_SUPERVISOR'
+        : 'L2_COMPLIANCE'
+      : result.recommendation.actionCode === 'WAIT_FOR_REVERSAL'
+        ? 'CASE_SPECIALIST'
+        : result.recommendation.actionCode === 'ESCALATE_SECURITY'
+          ? 'SECURITY_TEAM'
+          : null;
+  assertCondition(
+    requiredActionRules.every((ruleId) =>
+      result.recommendation.ruleIds.includes(ruleId),
+    ) &&
+      (expectedApproval === null || result.approval.level === expectedApproval),
+    'DISPOSITION_RULE_BINDING',
+    '处置动作缺少授权规则或审批层级与规则不一致',
+  );
+  checks.push(
+    pass('DISPOSITION_RULE_BINDING', '处置动作、规则与审批层级绑定有效'),
+  );
+
   assertCondition(
     result.toolTraces.every((trace) => Object.hasOwn(toolLabels, trace.name)),
     'TOOL_PERMISSION',

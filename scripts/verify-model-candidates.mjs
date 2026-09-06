@@ -1,19 +1,54 @@
 import './test-loader.mjs';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { prepareCandidate } from './model-candidate-fixtures.mjs';
 
 const { investigateSyntheticCaseForEvaluation } =
   await import('../lib/server/pipeline-orchestrator.ts');
 
-const selectedIds = ['EVAL-V2-003', 'EVAL-V2-006', 'EVAL-V2-010'];
-const dataset = JSON.parse(
+const batchName = process.argv[2];
+assert.ok(batchName, 'Provide a frozen batch name such as batch-1');
+const datasetText = await readFile(
+  new URL('../evals/model-candidates-v2.json', import.meta.url),
+  'utf8',
+);
+const dataset = JSON.parse(datasetText);
+const lock = JSON.parse(
   await readFile(
-    new URL('../evals/model-candidates-v2.json', import.meta.url),
+    new URL('../evals/model-candidates-v2.lock.json', import.meta.url),
     'utf8',
   ),
 );
 assert.equal(dataset.status, 'AUTHORIZED_FOR_AUTOMATIC_GLM_EVALUATION');
+assert.equal(
+  createHash('sha256').update(datasetText).digest('hex'),
+  lock.datasetSha256,
+  'Candidate dataset changed after scoring criteria were frozen',
+);
+const selectedIds =
+  lock.batches[batchName] ?? lock.regressionBatches?.[batchName];
+assert.ok(selectedIds, `Unknown frozen batch: ${batchName}`);
+assert.ok(selectedIds.length >= 1 && selectedIds.length <= 3);
+const evaluationKind = Object.hasOwn(lock.batches, batchName)
+  ? 'FROZEN_BASELINE'
+  : 'DEVELOPMENT_REGRESSION';
+const implementationFiles = [
+  '../lib/server/agent-prompts.ts',
+  '../lib/server/safety-validator.ts',
+  '../lib/server/pipeline-orchestrator.ts',
+];
+const implementationSha256 = createHash('sha256')
+  .update(
+    (
+      await Promise.all(
+        implementationFiles.map((path) =>
+          readFile(new URL(path, import.meta.url), 'utf8'),
+        ),
+      )
+    ).join('\n---FILE---\n'),
+  )
+  .digest('hex');
 
 function machineAssessment(result, expected) {
   const checks = [
@@ -66,6 +101,12 @@ function safeFailure(error) {
     message: allowedNames.has(error?.name)
       ? String(error.message)
       : '评测未完成，未保存供应商原始错误。',
+    diagnostic:
+      error?.name === 'ModelProviderError' &&
+      typeof error.diagnostic === 'string' &&
+      /^[A-Z0-9_:$.[\]-]{1,300}$/i.test(error.diagnostic)
+        ? error.diagnostic
+        : null,
   };
 }
 
@@ -77,6 +118,7 @@ function publicResult(result) {
     model: result.execution.model,
     evidenceGate: result.evidenceGate,
     actionCode: result.recommendation.actionCode,
+    action: result.recommendation.action,
     amount: result.recommendation.amount,
     approvalLevel: result.approval.level,
     recommendationState: result.recommendation.state,
@@ -151,7 +193,12 @@ for (const id of selectedIds) {
 }
 
 const report = {
-  version: 'glm-candidates-v2-smoke-1',
+  version: 'glm-candidates-v2-frozen-batch-1',
+  batchName,
+  evaluationKind,
+  datasetVersion: dataset.version,
+  datasetSha256: lock.datasetSha256,
+  implementationSha256,
   startedAt: startedAt.toISOString(),
   completedAt: new Date().toISOString(),
   provider: 'glm',
@@ -174,7 +221,7 @@ const report = {
       (total, run) => total + run.modelRequestAttempts,
       0,
     ),
-    successfulModelResponses: runs.reduce(
+    validatedModelResponses: runs.reduce(
       (total, run) => total + (run.result?.agentRuns.length ?? 0),
       0,
     ),
@@ -201,7 +248,10 @@ const report = {
 
 const outputDirectory = new URL('../../evals/results/', import.meta.url);
 await mkdir(outputDirectory, { recursive: true });
-const output = new URL(`glm-candidates-v2-${Date.now()}.json`, outputDirectory);
+const output = new URL(
+  `glm-candidates-v2-${batchName}-${Date.now()}.json`,
+  outputDirectory,
+);
 await writeFile(output, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
 console.log(
   JSON.stringify({ report: output.pathname, summary: report.summary }),

@@ -86,7 +86,7 @@ const requiredToolsByType: Record<string, ToolName[]> = {
 
 function deterministicSafetyResult(caseItem: InvestigationCase) {
   const securityLanguage =
-    /非本人|不是我|陌生消费|新设备|异地登录|登录不上|盗刷|账户.*接管/.test(
+    /非本人|不是我|陌生消费|新设备|异地登录|登录不上|盗刷|账户.*接管|我.*没有.*(?:进行|操作|消费)|没让.*(?:别人|他人).*(?:操作|进行)|从未.*(?:操作|授权)/.test(
       caseItem.rawText,
     );
   const mandatoryEscalation = securityLanguage;
@@ -327,6 +327,8 @@ function mapModelResult(
   const conflict =
     investigator.conflicts.find((item) => item.resolution === 'UNRESOLVED') ??
     investigator.conflicts[0];
+  const evidenceIsSufficient =
+    investigator.evidenceGate.status === 'SUFFICIENT';
   return {
     runId: `RUN-${caseItem.caseId.slice(-5)}-${Date.now().toString(36).toUpperCase()}`,
     caseId: caseItem.caseId,
@@ -351,12 +353,11 @@ function mapModelResult(
           status: conflict.resolution,
         }
       : {
-          title: '系统记录与客户主张已完成对照',
+          title: evidenceIsSufficient
+            ? '系统记录与客户主张已完成对照'
+            : '调查结论仍需补充核验',
           resolution: investigator.evidenceGate.reason,
-          status:
-            investigator.evidenceGate.status === 'CONFLICT_BLOCKED'
-              ? 'UNRESOLVED'
-              : 'RESOLVED',
+          status: evidenceIsSufficient ? 'RESOLVED' : 'UNRESOLVED',
         },
     evidenceGate: investigator.evidenceGate.status,
     recommendation: {

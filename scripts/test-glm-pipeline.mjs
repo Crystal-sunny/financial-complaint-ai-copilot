@@ -77,7 +77,11 @@ function outputs(caseItem) {
   investigator.conflicts = [];
   investigator.missingInformation = [];
   const disposition = fixture(dispositionSchema);
-  disposition.recommendation.ruleIds = [rule.ruleId];
+  disposition.recommendation.ruleIds = {
+    early_repayment_debit: ['RULE-PAY-004', 'RULE-APPROVAL-002'],
+    duplicate_debit: ['RULE-PAY-005'],
+    suspected_fraud: ['RULE-SECURITY-001', 'RULE-SECURITY-002'],
+  }[caseItem.expectedType];
   disposition.recommendation.actionCode = {
     early_repayment_debit: 'PROPOSE_REFUND',
     duplicate_debit: 'WAIT_FOR_REVERSAL',
@@ -166,6 +170,46 @@ await test('isolated synthetic evaluation uses its supplied database and has no 
     (error) => error?.code === 'MODEL_SOURCE_REFERENCE',
   );
   assert.equal(calls(), 3);
+});
+await test('non-template transaction denial triggers deterministic security escalation', async () => {
+  const base = mockDatabase.cases[2];
+  const caseItem = {
+    ...base,
+    caseId: 'EVAL-V2-011',
+    rawText:
+      '昨晚手机一直在我床头，凌晨连续发生的三笔消费我完全没有进行过，也没让别人替我操作。',
+    customerRequests: ['核验三笔并确认账户安全。'],
+  };
+  const calls = stub(base);
+  const result = await investigateSyntheticCaseForEvaluation(
+    caseItem,
+    structuredClone(mockDatabase),
+  );
+  assert.equal(calls(), 3);
+  assert.equal(result.coordinator.mandatoryEscalation, true);
+  assert.equal(result.evidenceGate, 'MANDATORY_ESCALATION');
+  assert.equal(result.recommendation.actionCode, 'ESCALATE_SECURITY');
+});
+await test('insufficient evidence without a conflict remains visibly unresolved', async () => {
+  stub(mockDatabase.cases[0], (value, index) => {
+    if (index === 1) {
+      value.conflicts = [];
+      value.evidenceGate.status = 'INSUFFICIENT';
+      value.evidenceGate.reason = '关键支付记录仍需补充核验。';
+    }
+    if (index === 2) {
+      value.recommendation.actionCode = 'REQUEST_INFORMATION';
+      value.recommendation.state = 'NEEDS_INFORMATION';
+      value.approvalRequirement.level = 'CASE_SPECIALIST';
+    }
+    return value;
+  });
+  const result = await investigateCase(mockDatabase.cases[0].caseId, {
+    provider: 'glm',
+  });
+  assert.equal(result.execution.actualProvider, 'glm');
+  assert.equal(result.conflict.status, 'UNRESOLVED');
+  assert.equal(result.conflict.title, '调查结论仍需补充核验');
 });
 for (const caseItem of mockDatabase.cases) {
   await test(`${caseItem.caseId} GLM path preserves stage order, tokens and scoped inputs`, async () => {
@@ -419,7 +463,7 @@ await test('model evidence conflict cannot enter approval or generate a canned r
     hiddenConflict.execution.fallbackReason.includes('FINANCIAL_ACTION_GATE'),
   );
 });
-await test('waiting for reversal uses specialist review and never silently accepts a refund approver', async () => {
+await test('waiting for reversal uses specialist review and safely rejects a refund approver', async () => {
   for (const level of ['CASE_SPECIALIST', 'L1_SUPERVISOR']) {
     stub(mockDatabase.cases[1], (value, index) => {
       if (index === 2) value.approvalRequirement.level = level;
@@ -428,16 +472,20 @@ await test('waiting for reversal uses specialist review and never silently accep
     const result = await investigateCase(mockDatabase.cases[1].caseId, {
       provider: 'glm',
     });
-    assert.equal(result.execution.actualProvider, 'glm');
+    assert.equal(
+      result.execution.actualProvider,
+      level === 'CASE_SPECIALIST' ? 'glm' : 'recorded',
+    );
+    assert.equal(result.execution.fallbackUsed, level !== 'CASE_SPECIALIST');
+    if (level !== 'CASE_SPECIALIST')
+      assert.ok(
+        result.execution.fallbackReason.includes('DISPOSITION_RULE_BINDING'),
+      );
+    assert.equal(result.approval.level, 'CASE_SPECIALIST');
     assert.equal(result.recommendation.amount, 588.2);
     registerApprovalContext(result);
     const response = await approvalRequest(result.caseId, result.runId);
-    assert.equal(response.status, level === 'CASE_SPECIALIST' ? 200 : 409);
-    if (level !== 'CASE_SPECIALIST')
-      assert.equal(
-        Object.hasOwn(await response.json(), 'responseDraft'),
-        false,
-      );
+    assert.equal(response.status, 200);
   }
 });
 await test('rerunning a case invalidates its previous approval context', async () => {

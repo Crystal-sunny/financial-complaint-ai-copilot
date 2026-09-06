@@ -22,9 +22,23 @@ const text = await readFile(
   'utf8',
 );
 const dataset = JSON.parse(text);
+const lock = JSON.parse(
+  await readFile(
+    new URL('../evals/model-candidates-v2.lock.json', import.meta.url),
+    'utf8',
+  ),
+);
 assert.equal(dataset.cases.length, 12);
 assert.equal(new Set(dataset.cases.map((item) => item.id)).size, 12);
 assert.equal(dataset.status, 'AUTHORIZED_FOR_AUTOMATIC_GLM_EVALUATION');
+assert.equal(
+  createHash('sha256').update(text).digest('hex'),
+  lock.datasetSha256,
+);
+assert.deepEqual(
+  Object.values(lock.batches).flat().sort(),
+  dataset.cases.map((item) => item.id).sort(),
+);
 const original = JSON.stringify(mockDatabase);
 for (const sample of dataset.cases) {
   const prepared = prepareCandidate(sample);
