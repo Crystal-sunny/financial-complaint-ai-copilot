@@ -2,9 +2,11 @@
 
 import { useEffect, useState } from 'react';
 import {
+  Activity,
   AlertTriangle,
   ArrowRight,
   Bot,
+  Braces,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -14,6 +16,7 @@ import {
   Copy,
   Database,
   FileCheck2,
+  Gauge,
   Gavel,
   Landmark,
   ListFilter,
@@ -26,11 +29,23 @@ import {
   ShieldAlert,
   ShieldCheck,
   UserRound,
+  Workflow,
   XCircle,
 } from 'lucide-react';
 
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from '@/components/ui/accordion';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible';
 import { Input } from '@/components/ui/input';
 import {
   Popover,
@@ -41,6 +56,7 @@ import {
 } from '@/components/ui/popover';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import type {
+  AgentStageId,
   ApprovalOutcome,
   Evidence,
   InvestigationResult,
@@ -118,13 +134,27 @@ const cases: CaseView[] = [
 ];
 
 const runStages = [
-  { label: '案件协调', detail: '识别诉求、业务类型与风险', icon: Bot },
   {
-    label: '事实与规则调查',
-    detail: '调用八个服务端只读工具',
+    stageId: 'case_coordinator' as const,
+    label: '案件协调 Agent',
+    detail: '识别诉求、业务类型与风险',
+    waitingInput: '客户陈述与案件上下文',
+    icon: Bot,
+  },
+  {
+    stageId: 'fact_rule_investigator' as const,
+    label: '事实与规则调查 Agent',
+    detail: '调用服务端只读工具并建立证据链',
+    waitingInput: '协调结果与只读工具计划',
     icon: ScanSearch,
   },
-  { label: '处置与合规审查', detail: '生成有证据约束的建议', icon: Gavel },
+  {
+    stageId: 'disposition_compliance' as const,
+    label: '处置与合规审查 Agent',
+    detail: '生成受证据门和审批约束的建议',
+    waitingInput: '证据门、规则与冲突状态',
+    icon: Gavel,
+  },
 ];
 
 const approvalLabels: Record<string, string> = {
@@ -160,6 +190,12 @@ function EvidenceDot({ tone }: { tone: Evidence['tone'] }) {
 function formatEvidenceTime(value: string) {
   const match = value.match(/2026-(\d\d)-(\d\d)T(\d\d):(\d\d)/);
   return match ? `${match[1]}-${match[2]} ${match[3]}:${match[4]}` : value;
+}
+
+function formatDuration(value: number) {
+  if (value < 1) return '<1 ms';
+  if (value < 1000) return `${value} ms`;
+  return `${(value / 1000).toFixed(2)} s`;
 }
 
 export function CaseWorkbench() {
@@ -199,6 +235,9 @@ export function CaseWorkbench() {
   >('all');
   const [todayOpen, setTodayOpen] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
+  const [expandedAgentByCase, setExpandedAgentByCase] = useState<
+    Record<string, AgentStageId | null>
+  >({});
 
   const selectedCase = cases.find((item) => item.id === selectedId) ?? cases[0];
   const result = resultsByCase[selectedId] ?? null;
@@ -230,14 +269,17 @@ export function CaseWorkbench() {
     });
   })();
 
-  const pendingCases = cases.filter(
-    (item) => decisionsByCase[item.id] !== 'replied',
-  );
-  const handledToday =
-    12 +
-    Object.values(decisionsByCase).filter(
-      (item) => item === 'approved' || item === 'replied',
-    ).length;
+  const historicalCompletedToday = 12;
+  const repliedToday = Object.values(decisionsByCase).filter(
+    (item) => item === 'replied',
+  ).length;
+  const totalToday = historicalCompletedToday + cases.length;
+  const handledToday = historicalCompletedToday + repliedToday;
+  const pendingToday = totalToday - handledToday;
+  const expandedAgent = expandedAgentByCase[selectedId] ?? null;
+  const totalAgentDuration =
+    result?.agentRuns.reduce((total, agent) => total + agent.durationMs, 0) ??
+    0;
 
   useEffect(() => {
     let active = true;
@@ -274,6 +316,10 @@ export function CaseWorkbench() {
     setAuditByCase((current) => ({ ...current, [caseId]: false }));
     setRunningCaseId(caseId);
     setRunStepsByCase((current) => ({ ...current, [caseId]: 0 }));
+    setExpandedAgentByCase((current) => ({
+      ...current,
+      [caseId]: 'case_coordinator',
+    }));
 
     try {
       const request = fetch(`/api/cases/${caseId}/investigate`, {
@@ -283,8 +329,16 @@ export function CaseWorkbench() {
       });
       await new Promise((resolve) => setTimeout(resolve, 420));
       setRunStepsByCase((current) => ({ ...current, [caseId]: 1 }));
+      setExpandedAgentByCase((current) => ({
+        ...current,
+        [caseId]: 'fact_rule_investigator',
+      }));
       await new Promise((resolve) => setTimeout(resolve, 580));
       setRunStepsByCase((current) => ({ ...current, [caseId]: 2 }));
+      setExpandedAgentByCase((current) => ({
+        ...current,
+        [caseId]: 'disposition_compliance',
+      }));
       const response = await request;
       if (!response.ok) throw new Error('调查服务暂时不可用');
       const data = (await response.json()) as InvestigationResult;
@@ -293,6 +347,10 @@ export function CaseWorkbench() {
       setDecisionsByCase((current) => ({ ...current, [caseId]: 'pending' }));
       setEvidenceByCase((current) => ({ ...current, [caseId]: null }));
       setRunStepsByCase((current) => ({ ...current, [caseId]: 3 }));
+      setExpandedAgentByCase((current) => ({
+        ...current,
+        [caseId]: 'disposition_compliance',
+      }));
     } catch (cause) {
       setErrorsByCase((current) => ({
         ...current,
@@ -398,7 +456,7 @@ export function CaseWorkbench() {
               <Clock3 data-icon="inline-start" className="text-amber-600" />
               今日待处理{' '}
               <span className="font-semibold text-slate-900">
-                {pendingCases.length}
+                {pendingToday}
               </span>
               <ChevronDown data-icon="inline-end" />
             </PopoverTrigger>
@@ -627,14 +685,14 @@ export function CaseWorkbench() {
             <div className="flex items-center justify-between text-[11px]">
               <span className="text-slate-500">今日处理进度</span>
               <span className="font-semibold text-slate-700">
-                {handledToday} / 20
+                {handledToday} / {totalToday}
               </span>
             </div>
             <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-200">
               <div
                 className="h-full rounded-full bg-teal-600 transition-[width] duration-300"
                 style={{
-                  width: `${Math.min((handledToday / 20) * 100, 100)}%`,
+                  width: `${Math.min((handledToday / totalToday) * 100, 100)}%`,
                 }}
               />
             </div>
@@ -898,162 +956,383 @@ export function CaseWorkbench() {
                 </div>
 
                 <div className="space-y-4">
-                  <div className="rounded-xl border bg-white p-4 shadow-[0_6px_24px_rgb(15_23_42/4%)]">
-                    <div className="flex items-center gap-2">
-                      <Bot className="size-4 text-teal-700" />
-                      <h3 className="text-sm font-semibold text-slate-900">
-                        AI 协同调查
-                      </h3>
+                  <div className="overflow-hidden rounded-xl border bg-white shadow-[0_6px_24px_rgb(15_23_42/4%)]">
+                    <div className="border-b border-teal-900/10 bg-gradient-to-br from-teal-950 to-teal-800 p-4 text-white">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <div className="grid size-7 place-items-center rounded-lg bg-white/10 ring-1 ring-white/15">
+                            <Workflow className="size-4 text-emerald-300" />
+                          </div>
+                          <h3 className="text-sm font-semibold">
+                            AI Agent 协同调查
+                          </h3>
+                        </div>
+                        <span className="rounded-full bg-emerald-300/15 px-2 py-1 font-mono text-[9px] font-semibold text-emerald-200 ring-1 ring-emerald-300/20">
+                          3 AGENTS
+                        </span>
+                      </div>
+                      <p className="mt-2 text-[10px] leading-4 text-teal-100/75">
+                        三个 Agent
+                        串行协作，每一步的输入、输出与运行指标都可追溯。
+                      </p>
                     </div>
-                    <p className="mt-2 text-[11px] leading-[1.6] text-slate-500">
-                      三个角色按顺序完成分类、证据核验和合规建议。
-                    </p>
 
-                    <div className="mt-3 grid grid-cols-2 gap-1 rounded-lg bg-slate-100 p-1">
-                      <Button
-                        type="button"
-                        size="xs"
-                        variant={
-                          providerMode === 'recorded' ? 'secondary' : 'ghost'
-                        }
-                        onClick={() => setProviderMode('recorded')}
-                        disabled={Boolean(runningCaseId)}
-                        className="h-7 text-[10px]"
-                      >
-                        稳定模式
-                      </Button>
-                      <Button
-                        type="button"
-                        size="xs"
-                        variant={
-                          providerMode === 'openai' ? 'secondary' : 'ghost'
-                        }
-                        onClick={() => setProviderMode('openai')}
-                        disabled={
-                          !runtime.openai.available || Boolean(runningCaseId)
-                        }
-                        title={
-                          runtime.openai.available
-                            ? `使用 ${runtime.openai.model}`
-                            : '模型服务完成安全配置后可用'
-                        }
-                        className="h-7 text-[10px]"
-                      >
-                        模型增强
-                      </Button>
-                    </div>
-                    <p className="mt-1.5 text-[9px] leading-4 text-slate-400">
-                      {runtime.openai.available
-                        ? `可用模型：${runtime.openai.model}`
-                        : '模型增强待安全配置，稳定模式正常可用'}
-                    </p>
+                    <div className="p-4">
+                      <div className="grid grid-cols-2 gap-1 rounded-lg bg-slate-100 p-1">
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant={
+                            providerMode === 'recorded' ? 'secondary' : 'ghost'
+                          }
+                          onClick={() => setProviderMode('recorded')}
+                          disabled={Boolean(runningCaseId)}
+                          className="h-7 text-[10px]"
+                        >
+                          稳定模式
+                        </Button>
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant={
+                            providerMode === 'openai' ? 'secondary' : 'ghost'
+                          }
+                          onClick={() => setProviderMode('openai')}
+                          disabled={
+                            !runtime.openai.available || Boolean(runningCaseId)
+                          }
+                          title={
+                            runtime.openai.available
+                              ? `使用 ${runtime.openai.model}`
+                              : '模型服务完成安全配置后可用'
+                          }
+                          className="h-7 text-[10px]"
+                        >
+                          模型增强
+                        </Button>
+                      </div>
+                      <p className="mt-1.5 text-[9px] leading-4 text-slate-400">
+                        {runtime.openai.available
+                          ? `可用模型：${runtime.openai.model}`
+                          : '模型增强待安全配置，稳定模式正常可用'}
+                      </p>
 
-                    {(isRunning || result) && (
-                      <div className="mt-4 space-y-2.5">
+                      {result ? (
+                        <div className="mt-3 rounded-lg border border-teal-800/10 bg-teal-50/55 p-2.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold text-teal-900">
+                              <Activity className="size-3.5 text-teal-700" />
+                              {result.execution.actualProvider === 'openai'
+                                ? result.execution.model
+                                : '稳定执行流'}
+                            </span>
+                            <span className="font-mono text-[8px] text-teal-700/70">
+                              {result.runId}
+                            </span>
+                          </div>
+                          <div className="mt-2 grid grid-cols-3 gap-1.5">
+                            {[
+                              ['总耗时', formatDuration(totalAgentDuration)],
+                              ['工具调用', `${result.toolTraces.length} 次`],
+                              ['关键证据', `${result.evidence.length} 项`],
+                            ].map(([label, value]) => (
+                              <div
+                                key={label}
+                                className="rounded-md bg-white/80 px-1.5 py-1.5 text-center ring-1 ring-teal-900/5"
+                              >
+                                <p className="text-[8px] text-slate-400">
+                                  {label}
+                                </p>
+                                <p className="mt-0.5 font-mono text-[9px] font-semibold text-slate-700">
+                                  {value}
+                                </p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="mt-3 flex items-center gap-2 rounded-lg border border-dashed bg-slate-50 px-2.5 py-2 text-[9px] text-slate-500">
+                          <Gauge className="size-3.5 text-teal-700" />
+                          运行后将生成完整的 Agent 执行档案
+                        </div>
+                      )}
+
+                      <Accordion
+                        value={expandedAgent ? [expandedAgent] : []}
+                        onValueChange={(values) =>
+                          setExpandedAgentByCase((current) => ({
+                            ...current,
+                            [selectedId]:
+                              (values[0] as AgentStageId | undefined) ?? null,
+                          }))
+                        }
+                        className="mt-3 gap-2"
+                      >
                         {runStages.map((stage, index) => {
                           const StageIcon = stage.icon;
-                          const completed = result != null || runStep > index;
+                          const trace = result?.agentRuns.find(
+                            (agent) => agent.stageId === stage.stageId,
+                          );
+                          const completed = Boolean(trace) || runStep > index;
                           const active = isRunning && runStep === index;
+                          const statusLabel = active
+                            ? '运行中'
+                            : completed
+                              ? '已完成'
+                              : '待运行';
                           return (
-                            <div
-                              key={stage.label}
-                              className={`flex items-center gap-2.5 rounded-lg border px-2.5 py-2 ${
+                            <AccordionItem
+                              key={stage.stageId}
+                              value={stage.stageId}
+                              className={`overflow-hidden rounded-lg border ${
                                 active
-                                  ? 'border-teal-600/25 bg-teal-50'
+                                  ? 'border-teal-500/30 bg-teal-50/70'
                                   : completed
-                                    ? 'border-emerald-600/15 bg-emerald-50/60'
-                                    : 'bg-slate-50'
+                                    ? 'border-emerald-600/15 bg-emerald-50/45'
+                                    : 'border-slate-200 bg-slate-50/70'
                               }`}
                             >
-                              <div className="grid size-6 shrink-0 place-items-center rounded-md bg-white ring-1 ring-slate-900/5">
-                                {active ? (
-                                  <LoaderCircle className="size-3.5 animate-spin text-teal-700" />
-                                ) : completed ? (
-                                  <Check className="size-3.5 text-emerald-700" />
-                                ) : (
-                                  <StageIcon className="size-3.5 text-slate-400" />
-                                )}
-                              </div>
-                              <div className="min-w-0">
-                                <p className="text-[10px] font-semibold text-slate-700">
-                                  {stage.label}
-                                </p>
-                                <p className="truncate text-[9px] text-slate-400">
-                                  {stage.detail}
-                                </p>
-                              </div>
-                            </div>
+                              <AccordionTrigger className="items-center px-2.5 py-2 hover:no-underline">
+                                <span className="flex min-w-0 flex-1 items-center gap-2">
+                                  <span className="grid size-7 shrink-0 place-items-center rounded-lg bg-white shadow-sm ring-1 ring-slate-900/5">
+                                    {active ? (
+                                      <LoaderCircle className="size-3.5 animate-spin text-teal-700" />
+                                    ) : completed ? (
+                                      <Check className="size-3.5 text-emerald-700" />
+                                    ) : (
+                                      <StageIcon className="size-3.5 text-slate-400" />
+                                    )}
+                                  </span>
+                                  <span className="min-w-0 flex-1">
+                                    <span className="block truncate text-[10px] font-semibold text-slate-800">
+                                      {stage.label}
+                                    </span>
+                                    <span className="mt-0.5 block truncate text-[8px] font-normal text-slate-400">
+                                      {stage.detail}
+                                    </span>
+                                  </span>
+                                  <span className="mr-1 shrink-0 text-right">
+                                    <span
+                                      className={`block text-[8px] font-semibold ${
+                                        active
+                                          ? 'text-teal-700'
+                                          : completed
+                                            ? 'text-emerald-700'
+                                            : 'text-slate-400'
+                                      }`}
+                                    >
+                                      {statusLabel}
+                                    </span>
+                                    <span className="mt-0.5 block font-mono text-[8px] font-normal text-slate-400">
+                                      {trace
+                                        ? formatDuration(trace.durationMs)
+                                        : '—'}
+                                    </span>
+                                  </span>
+                                </span>
+                              </AccordionTrigger>
+                              <AccordionContent className="border-t border-slate-200/70 px-2.5 pb-2.5 pt-2">
+                                <div className="space-y-2.5">
+                                  {[
+                                    {
+                                      label: '输入',
+                                      values: trace?.inputSummary ?? [
+                                        stage.waitingInput,
+                                      ],
+                                      tone: 'text-sky-700',
+                                    },
+                                    {
+                                      label: '处理',
+                                      values: trace?.actions ?? [stage.detail],
+                                      tone: 'text-violet-700',
+                                    },
+                                    {
+                                      label: '输出',
+                                      values: trace?.outputSummary ?? [
+                                        active
+                                          ? '正在生成结构化输出…'
+                                          : '运行完成后生成',
+                                      ],
+                                      tone: 'text-emerald-700',
+                                    },
+                                  ].map((section) => (
+                                    <div key={section.label}>
+                                      <p
+                                        className={`text-[8px] font-bold tracking-[0.12em] ${section.tone}`}
+                                      >
+                                        {section.label}
+                                      </p>
+                                      <ul className="mt-1 space-y-1">
+                                        {section.values.map((value) => (
+                                          <li
+                                            key={value}
+                                            className="flex gap-1.5 text-[9px] leading-4 text-slate-600"
+                                          >
+                                            <span className="mt-[6px] size-1 shrink-0 rounded-full bg-slate-300" />
+                                            <span className="min-w-0 break-words">
+                                              {value}
+                                            </span>
+                                          </li>
+                                        ))}
+                                      </ul>
+                                    </div>
+                                  ))}
+
+                                  {trace && (
+                                    <>
+                                      <div className="grid grid-cols-2 gap-1.5 border-t border-slate-200 pt-2.5">
+                                        {[
+                                          ['工具', trace.metrics.toolCalls],
+                                          ['记录', trace.metrics.recordCount],
+                                          ['证据', trace.metrics.evidenceCount],
+                                          ['规则', trace.metrics.ruleCount],
+                                        ].map(([label, value]) => (
+                                          <div
+                                            key={label}
+                                            className="flex items-center justify-between rounded-md bg-white px-2 py-1.5 ring-1 ring-slate-900/5"
+                                          >
+                                            <span className="text-[8px] text-slate-400">
+                                              {label}
+                                            </span>
+                                            <span className="font-mono text-[9px] font-semibold text-slate-700">
+                                              {value}
+                                            </span>
+                                          </div>
+                                        ))}
+                                      </div>
+
+                                      <Collapsible
+                                        key={`${result?.runId}-${stage.stageId}`}
+                                      >
+                                        <CollapsibleTrigger className="group/technical flex w-full items-center justify-between rounded-md border bg-white px-2 py-1.5 text-left text-[9px] font-semibold text-slate-600 outline-none transition-colors hover:bg-slate-50 focus-visible:ring-2 focus-visible:ring-teal-600/30">
+                                          <span className="flex items-center gap-1.5">
+                                            <Braces className="size-3 text-teal-700" />
+                                            技术详情
+                                          </span>
+                                          <ChevronDown className="size-3 text-slate-400 transition-transform group-aria-expanded/technical:rotate-180" />
+                                        </CollapsibleTrigger>
+                                        <CollapsibleContent>
+                                          <div className="mt-1.5 min-w-0 rounded-md bg-slate-950 p-2 text-slate-200">
+                                            <div className="flex flex-wrap items-center justify-between gap-1 text-[8px] text-slate-400">
+                                              <span>
+                                                {trace.provider === 'openai'
+                                                  ? '模型执行'
+                                                  : '稳定执行'}
+                                              </span>
+                                              {trace.technicalDetails
+                                                .responseId && (
+                                                <span className="max-w-full break-all font-mono">
+                                                  {
+                                                    trace.technicalDetails
+                                                      .responseId
+                                                  }
+                                                </span>
+                                              )}
+                                            </div>
+                                            {trace.metrics.inputTokens !==
+                                              null && (
+                                              <p className="mt-1 font-mono text-[8px] text-teal-300">
+                                                tokens in{' '}
+                                                {trace.metrics.inputTokens} ·
+                                                out {trace.metrics.outputTokens}
+                                              </p>
+                                            )}
+                                            <p className="mt-2 text-[8px] font-semibold text-sky-300">
+                                              INPUT
+                                            </p>
+                                            <pre className="mt-1 max-h-40 max-w-full overflow-auto whitespace-pre-wrap break-all font-mono text-[8px] leading-4">
+                                              {JSON.stringify(
+                                                trace.technicalDetails.input,
+                                                null,
+                                                2,
+                                              )}
+                                            </pre>
+                                            <p className="mt-2 border-t border-white/10 pt-2 text-[8px] font-semibold text-emerald-300">
+                                              OUTPUT
+                                            </p>
+                                            <pre className="mt-1 max-h-48 max-w-full overflow-auto whitespace-pre-wrap break-all font-mono text-[8px] leading-4">
+                                              {JSON.stringify(
+                                                trace.technicalDetails.output,
+                                                null,
+                                                2,
+                                              )}
+                                            </pre>
+                                          </div>
+                                        </CollapsibleContent>
+                                      </Collapsible>
+                                    </>
+                                  )}
+                                </div>
+                              </AccordionContent>
+                            </AccordionItem>
                           );
                         })}
-                      </div>
-                    )}
+                      </Accordion>
 
-                    {result && (
-                      <div
-                        className={`mt-3 rounded-lg border p-2.5 ${
-                          result.execution.fallbackUsed
-                            ? 'border-amber-200 bg-amber-50'
-                            : 'border-emerald-200 bg-emerald-50/70'
-                        }`}
-                      >
-                        <p className="flex items-center gap-1.5 text-[10px] font-semibold text-slate-700">
-                          <ShieldCheck
-                            className={`size-3.5 ${
-                              result.execution.fallbackUsed
-                                ? 'text-amber-700'
-                                : 'text-emerald-700'
-                            }`}
-                          />
-                          {result.execution.actualProvider === 'openai'
-                            ? '模型结果已通过安全校验'
-                            : '稳定结果已通过安全校验'}
-                        </p>
-                        <p className="mt-1 text-[9px] leading-4 text-slate-500">
-                          {result.execution.model
-                            ? `${result.execution.model} · `
-                            : ''}
-                          {result.execution.validationChecks.length}{' '}
-                          项硬性检查通过
-                        </p>
-                        {result.execution.fallbackReason && (
-                          <p className="mt-1 text-[9px] leading-4 text-amber-700">
-                            {result.execution.fallbackReason}
+                      {result && (
+                        <div
+                          className={`mt-3 rounded-lg border p-2.5 ${
+                            result.execution.fallbackUsed
+                              ? 'border-amber-200 bg-amber-50'
+                              : 'border-emerald-200 bg-emerald-50/70'
+                          }`}
+                        >
+                          <p className="flex items-center gap-1.5 text-[10px] font-semibold text-slate-700">
+                            <ShieldCheck
+                              className={`size-3.5 ${
+                                result.execution.fallbackUsed
+                                  ? 'text-amber-700'
+                                  : 'text-emerald-700'
+                              }`}
+                            />
+                            {result.execution.actualProvider === 'openai'
+                              ? '模型结果已通过安全校验'
+                              : '稳定结果已通过安全校验'}
                           </p>
-                        )}
-                      </div>
-                    )}
-
-                    {error && (
-                      <div className="mt-3 rounded-lg bg-rose-50 p-2.5 text-[10px] text-rose-700">
-                        {error}
-                      </div>
-                    )}
-
-                    <Button
-                      onClick={runInvestigation}
-                      disabled={Boolean(runningCaseId)}
-                      className="mt-4 h-9 w-full justify-between px-3 text-xs"
-                    >
-                      {isRunning
-                        ? '调查进行中…'
-                        : runningCaseId
-                          ? '另一案件调查中…'
-                          : result
-                            ? '重新运行调查'
-                            : providerMode === 'openai'
-                              ? '开始模型调查'
-                              : '开始 AI 调查'}
-                      {isRunning ? (
-                        <LoaderCircle
-                          data-icon="inline-end"
-                          className="animate-spin"
-                        />
-                      ) : result ? (
-                        <RotateCcw data-icon="inline-end" />
-                      ) : (
-                        <ArrowRight data-icon="inline-end" />
+                          <p className="mt-1 text-[9px] leading-4 text-slate-500">
+                            {result.execution.validationChecks.length}{' '}
+                            项硬性检查通过
+                          </p>
+                          {result.execution.fallbackReason && (
+                            <p className="mt-1 text-[9px] leading-4 text-amber-700">
+                              {result.execution.fallbackReason}
+                            </p>
+                          )}
+                        </div>
                       )}
-                    </Button>
+
+                      {error && (
+                        <div className="mt-3 rounded-lg bg-rose-50 p-2.5 text-[10px] text-rose-700">
+                          {error}
+                        </div>
+                      )}
+
+                      <Button
+                        onClick={runInvestigation}
+                        disabled={Boolean(runningCaseId)}
+                        className="mt-4 h-9 w-full justify-between px-3 text-xs"
+                      >
+                        {isRunning
+                          ? 'Agent 协作进行中…'
+                          : runningCaseId
+                            ? '另一案件调查中…'
+                            : result
+                              ? '重新运行 Agent 调查'
+                              : providerMode === 'openai'
+                                ? '开始模型 Agent 调查'
+                                : '开始 AI Agent 调查'}
+                        {isRunning ? (
+                          <LoaderCircle
+                            data-icon="inline-end"
+                            className="animate-spin"
+                          />
+                        ) : result ? (
+                          <RotateCcw data-icon="inline-end" />
+                        ) : (
+                          <ArrowRight data-icon="inline-end" />
+                        )}
+                      </Button>
+                    </div>
                   </div>
 
                   <div

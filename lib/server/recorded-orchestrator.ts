@@ -232,7 +232,7 @@ function buildDisposition(
   caseItem: MockCase,
 ): Omit<
   InvestigationResult,
-  'runId' | 'generatedAt' | 'toolTraces' | 'execution'
+  'runId' | 'generatedAt' | 'toolTraces' | 'agentRuns' | 'execution'
 > {
   if (caseItem.expectedType === 'early_repayment_debit') {
     return {
@@ -402,7 +402,7 @@ function buildDisposition(
 
 export function investigateRecordedCase(
   caseId: string,
-): Omit<InvestigationResult, 'execution'> | null {
+): Omit<InvestigationResult, 'agentRuns' | 'execution'> | null {
   const caseItem = mockDatabase.cases.find((item) => item.caseId === caseId);
   if (!caseItem) return null;
 

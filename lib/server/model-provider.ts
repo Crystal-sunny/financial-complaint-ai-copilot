@@ -18,6 +18,7 @@ export type StructuredGenerationRequest = {
 export type ModelCallMetadata = {
   responseId: string;
   model: string;
+  durationMs: number;
   inputTokens: number;
   outputTokens: number;
 };
@@ -95,6 +96,7 @@ export class OpenAIModelProvider implements ModelProvider {
   async generateStructured<T>(
     request: StructuredGenerationRequest,
   ): Promise<StructuredGeneration<T>> {
+    const startedAt = performance.now();
     const response = await fetch('https://api.openai.com/v1/responses', {
       method: 'POST',
       headers: {
@@ -144,6 +146,7 @@ export class OpenAIModelProvider implements ModelProvider {
       metadata: {
         responseId: payload.id ?? 'response-unknown',
         model: payload.model ?? this.model,
+        durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
         inputTokens: payload.usage?.input_tokens ?? 0,
         outputTokens: payload.usage?.output_tokens ?? 0,
       },

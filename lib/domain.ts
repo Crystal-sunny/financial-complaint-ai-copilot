@@ -61,6 +61,36 @@ export type RuntimeCapabilities = {
   };
 };
 
+export type AgentStageId =
+  | 'case_coordinator'
+  | 'fact_rule_investigator'
+  | 'disposition_compliance';
+
+export type AgentRunTrace = {
+  stageId: AgentStageId;
+  name: string;
+  responsibility: string;
+  status: 'COMPLETED';
+  provider: ProviderMode;
+  durationMs: number;
+  inputSummary: string[];
+  actions: string[];
+  outputSummary: string[];
+  metrics: {
+    toolCalls: number;
+    recordCount: number;
+    evidenceCount: number;
+    ruleCount: number;
+    inputTokens: number | null;
+    outputTokens: number | null;
+  };
+  technicalDetails: {
+    input: Record<string, unknown>;
+    output: Record<string, unknown>;
+    responseId: string | null;
+  };
+};
+
 export type EvidenceType =
   | 'CUSTOMER_STATEMENT'
   | 'LOAN_CONTRACT'
@@ -134,6 +164,7 @@ export type InvestigationResult = {
   };
   prohibitedActions: string[];
   auditEvents: Array<{ at: string; actor: string; action: string }>;
+  agentRuns: AgentRunTrace[];
   execution: RuntimeExecution;
 };
 

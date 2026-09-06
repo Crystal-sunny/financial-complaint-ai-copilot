@@ -10,6 +10,7 @@ import {
   dispositionPrompt,
   investigatorPrompt,
 } from './agent-prompts';
+import { buildAgentRunTraces } from './agent-run-traces';
 import {
   assertCoordinatorOutput,
   assertDispositionOutput,
@@ -439,16 +440,19 @@ async function investigateWithOpenAI(caseItem: MockCase) {
     ),
     toolRuns,
     model: calls.at(-1)?.model ?? provider.model,
+    modelCalls: calls,
   };
 }
 
 function withExecution(
   result: InvestigationPayload,
   options: {
+    caseItem: MockCase;
     requestedProvider: ProviderMode;
     actualProvider: ProviderMode;
     model: string | null;
     fallbackReason?: string;
+    modelCalls?: ModelCallMetadata[];
     toolRuns?: ToolRun[];
   },
 ): InvestigationResult {
@@ -458,6 +462,12 @@ function withExecution(
   );
   return {
     ...result,
+    agentRuns: buildAgentRunTraces({
+      caseItem: options.caseItem,
+      result,
+      provider: options.actualProvider,
+      modelCalls: options.modelCalls,
+    }),
     execution: {
       requestedProvider: options.requestedProvider,
       actualProvider: options.actualProvider,
@@ -482,9 +492,11 @@ export async function investigateCase(
     try {
       const modelRun = await investigateWithOpenAI(caseItem);
       return withExecution(modelRun.result, {
+        caseItem,
         requestedProvider,
         actualProvider: 'openai',
         model: modelRun.model,
+        modelCalls: modelRun.modelCalls,
         toolRuns: modelRun.toolRuns,
       });
     } catch {
@@ -492,6 +504,7 @@ export async function investigateCase(
       if (!recorded) return null;
       const available = getRuntimeCapabilities().openai.available;
       return withExecution(recorded, {
+        caseItem,
         requestedProvider,
         actualProvider: 'recorded',
         model: null,
@@ -505,6 +518,7 @@ export async function investigateCase(
   const recorded = investigateRecordedCase(caseId);
   if (!recorded) return null;
   return withExecution(recorded, {
+    caseItem,
     requestedProvider,
     actualProvider: 'recorded',
     model: null,

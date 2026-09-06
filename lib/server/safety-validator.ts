@@ -1,6 +1,9 @@
 import type { InvestigationResult, ValidationCheck } from '../domain';
 
-export type InvestigationPayload = Omit<InvestigationResult, 'execution'>;
+export type InvestigationPayload = Omit<
+  InvestigationResult,
+  'agentRuns' | 'execution'
+>;
 
 type ValidationContext = {
   validSourceRecordIds: Set<string>;
