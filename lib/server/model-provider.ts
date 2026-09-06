@@ -1,4 +1,6 @@
 import type { ProviderMode, RuntimeCapabilities } from '../domain';
+import { caseDataTransmissionStatus } from './case-data-policy';
+import { assertSchema } from './schema-validator';
 
 type JsonSchema = Record<string, unknown>;
 
@@ -13,14 +15,15 @@ export type StructuredGenerationRequest = {
   input: unknown;
   schemaName: string;
   schema: JsonSchema;
+  signal?: AbortSignal;
 };
 
 export type ModelCallMetadata = {
-  responseId: string;
+  responseId: string | null;
   model: string;
   durationMs: number;
-  inputTokens: number;
-  outputTokens: number;
+  inputTokens: number | null;
+  outputTokens: number | null;
 };
 
 export type StructuredGeneration<T> = {
@@ -64,11 +67,163 @@ export function getRuntimeCapabilities(): RuntimeCapabilities {
   const config = runtimeConfig();
   return {
     defaultProvider: 'recorded',
+    caseDataTransmission: caseDataTransmissionStatus,
+    glm: {
+      configured: Boolean(process.env.GLM_API_KEY?.trim()) && validGlmBaseURL(),
+      available: false,
+      model: process.env.GLM_MODEL?.trim() || 'glm-5.3-flash',
+    },
     openai: {
-      available: Boolean(config.apiKey),
+      configured: Boolean(config.apiKey),
+      available: false,
       model: config.model,
     },
   };
+}
+
+const glmBaseURL = 'https://open.bigmodel.cn/api/paas/v4';
+
+function validGlmBaseURL() {
+  return (
+    (process.env.GLM_BASE_URL?.trim() || glmBaseURL).replace(/\/+$/, '') ===
+    glmBaseURL
+  );
+}
+
+const safeErrors = {
+  NOT_CONFIGURED: '模型服务尚未配置',
+  INVALID_ENDPOINT: '智谱 API 地址配置不正确，请使用官方通用接口',
+  AUTHENTICATION: '智谱密钥无效或没有模型访问权限',
+  QUOTA: '智谱可用额度不足或资源包不适用于该模型',
+  RATE_LIMIT: '智谱请求频率受限，请稍后重试',
+  TIMEOUT: '模型请求超时',
+  UNAVAILABLE: '模型服务暂时不可用',
+  INVALID_OUTPUT: '模型输出不完整或未通过结构化校验',
+} as const;
+
+export class ModelProviderError extends Error {
+  constructor(readonly code: keyof typeof safeErrors) {
+    super(safeErrors[code]);
+    this.name = 'ModelProviderError';
+  }
+}
+
+function tokenCount(value: unknown): number | null {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0
+    ? value
+    : null;
+}
+
+export class GLMModelProvider implements ModelProvider {
+  readonly mode = 'glm' as const;
+  readonly model: string;
+  readonly #apiKey: string;
+
+  constructor() {
+    if (!validGlmBaseURL()) throw new ModelProviderError('INVALID_ENDPOINT');
+    this.#apiKey = process.env.GLM_API_KEY?.trim() ?? '';
+    if (!this.#apiKey) throw new ModelProviderError('NOT_CONFIGURED');
+    this.model = process.env.GLM_MODEL?.trim() || 'glm-5.3-flash';
+  }
+
+  async generateStructured<T>(
+    request: StructuredGenerationRequest,
+  ): Promise<StructuredGeneration<T>> {
+    const startedAt = performance.now();
+    try {
+      const timeout = AbortSignal.timeout(90000);
+      const response = await fetch(`${glmBaseURL}/chat/completions`, {
+        method: 'POST',
+        redirect: 'error',
+        signal: request.signal
+          ? AbortSignal.any([request.signal, timeout])
+          : timeout,
+        headers: {
+          Authorization: `Bearer ${this.#apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: this.model,
+          messages: [
+            {
+              role: 'system',
+              content: `${request.instructions}\n只返回一个 JSON 对象，不要输出 Markdown。必须严格遵守以下 JSON Schema，禁止增加字段：\n${JSON.stringify(request.schema)}`,
+            },
+            { role: 'user', content: JSON.stringify(request.input) },
+          ],
+          response_format: { type: 'json_object' },
+          thinking: { type: 'enabled' },
+          reasoning_effort: 'low',
+          temperature: 1,
+          top_p: 0.95,
+          max_tokens: request.stage === 'fact_rule_investigator' ? 8192 : 4096,
+          stream: false,
+        }),
+      });
+      const payload = (await response.json()) as {
+        id?: string;
+        model?: string;
+        choices?: Array<{
+          finish_reason?: string;
+          message?: { content?: string };
+        }>;
+        usage?: { prompt_tokens?: number; completion_tokens?: number };
+        error?: { code?: string | number };
+      };
+      if (!response.ok) {
+        const code = String(payload.error?.code ?? '');
+        if (response.status === 401 || response.status === 403)
+          throw new ModelProviderError('AUTHENTICATION');
+        if (response.status === 402 || code === '1113')
+          throw new ModelProviderError('QUOTA');
+        if (response.status === 429) throw new ModelProviderError('RATE_LIMIT');
+        throw new ModelProviderError('UNAVAILABLE');
+      }
+      const choice = payload.choices?.[0];
+      // Never expose reasoning_content, raw provider payloads, or truncated JSON.
+      if (
+        choice?.finish_reason !== 'stop' ||
+        !choice.message?.content ||
+        (payload.model && payload.model !== this.model)
+      ) {
+        throw new ModelProviderError('INVALID_OUTPUT');
+      }
+      let output: T;
+      try {
+        output = JSON.parse(choice.message.content) as T;
+        assertSchema(output, request.schema);
+      } catch {
+        throw new ModelProviderError('INVALID_OUTPUT');
+      }
+      return {
+        output,
+        metadata: {
+          responseId:
+            typeof payload.id === 'string' && /^[\w-]{1,200}$/.test(payload.id)
+              ? payload.id
+              : null,
+          model: this.model,
+          durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
+          inputTokens: tokenCount(payload.usage?.prompt_tokens),
+          outputTokens: tokenCount(payload.usage?.completion_tokens),
+        },
+      };
+    } catch (error) {
+      if (error instanceof ModelProviderError) throw error;
+      if (
+        error instanceof Error &&
+        ['TimeoutError', 'AbortError'].includes(error.name)
+      )
+        throw new ModelProviderError('TIMEOUT');
+      throw new ModelProviderError('UNAVAILABLE');
+    }
+  }
+}
+
+export function createModelProvider(
+  mode: Exclude<ProviderMode, 'recorded'>,
+): ModelProvider {
+  return mode === 'glm' ? new GLMModelProvider() : new OpenAIModelProvider();
 }
 
 function extractOutputText(response: OpenAIResponse) {
@@ -99,6 +254,7 @@ export class OpenAIModelProvider implements ModelProvider {
     const startedAt = performance.now();
     const response = await fetch('https://api.openai.com/v1/responses', {
       method: 'POST',
+      signal: request.signal,
       headers: {
         Authorization: `Bearer ${this.#apiKey}`,
         'Content-Type': 'application/json',

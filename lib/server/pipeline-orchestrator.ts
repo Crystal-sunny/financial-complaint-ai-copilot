@@ -11,6 +11,7 @@ import {
   investigatorPrompt,
 } from './agent-prompts';
 import { buildAgentRunTraces } from './agent-run-traces';
+import { assertInvestigationProviderAllowed } from './case-data-policy';
 import {
   assertCoordinatorOutput,
   assertDispositionOutput,
@@ -487,6 +488,8 @@ export async function investigateCase(
   const caseItem = mockDatabase.cases.find((item) => item.caseId === caseId);
   if (!caseItem) return null;
   const requestedProvider = options.provider ?? 'recorded';
+  // Enforce the owner's pause before creating a provider or entering fallback.
+  assertInvestigationProviderAllowed(requestedProvider);
 
   if (requestedProvider === 'openai') {
     try {

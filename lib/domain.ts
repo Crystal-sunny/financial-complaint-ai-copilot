@@ -35,7 +35,7 @@ export type ToolTrace = {
   elapsedMs: number;
 };
 
-export type ProviderMode = 'recorded' | 'openai';
+export type ProviderMode = 'recorded' | 'openai' | 'glm';
 
 export type ValidationCheck = {
   code: string;
@@ -55,7 +55,14 @@ export type RuntimeExecution = {
 
 export type RuntimeCapabilities = {
   defaultProvider: ProviderMode;
+  caseDataTransmission: 'paused';
+  glm: {
+    configured: boolean;
+    available: boolean;
+    model: string;
+  };
   openai: {
+    configured: boolean;
     available: boolean;
     model: string;
   };
@@ -119,7 +126,7 @@ export type InvestigationResult = {
   runId: string;
   caseId: string;
   generatedAt: string;
-  mode: 'RECORDED' | 'OPENAI';
+  mode: 'RECORDED' | 'OPENAI' | 'GLM';
   coordinator: {
     complaintType: CaseType;
     riskLevel: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';

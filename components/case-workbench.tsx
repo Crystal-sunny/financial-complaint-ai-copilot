@@ -202,7 +202,9 @@ export function CaseWorkbench() {
   const [providerMode, setProviderMode] = useState<ProviderMode>('recorded');
   const [runtime, setRuntime] = useState<RuntimeCapabilities>({
     defaultProvider: 'recorded',
-    openai: { available: false, model: 'gpt-5.4-mini' },
+    caseDataTransmission: 'paused',
+    glm: { configured: false, available: false, model: 'glm-5.3-flash' },
+    openai: { configured: false, available: false, model: 'gpt-5.4-mini' },
   });
   const [selectedId, setSelectedId] = useState(cases[0].id);
   const [resultsByCase, setResultsByCase] = useState<
@@ -1048,26 +1050,28 @@ export function CaseWorkbench() {
                           type="button"
                           size="xs"
                           variant={
-                            providerMode === 'openai' ? 'secondary' : 'ghost'
+                            providerMode === 'glm' ? 'secondary' : 'ghost'
                           }
-                          onClick={() => setProviderMode('openai')}
-                          disabled={
-                            !runtime.openai.available || Boolean(runningCaseId)
-                          }
+                          disabled
+                          aria-describedby="model-availability"
                           title={
-                            runtime.openai.available
-                              ? `使用 ${runtime.openai.model}`
-                              : '模型服务完成安全配置后可用'
+                            runtime.glm.configured
+                              ? '密钥已配置，案件数据外发已暂停'
+                              : '待配置智谱密钥；案件数据外发已暂停'
                           }
                           className="h-7 text-[10px]"
                         >
-                          模型增强
+                          智谱 GLM · 已暂停
                         </Button>
                       </div>
-                      <p className="mt-1.5 text-[9px] leading-4 text-slate-400">
-                        {runtime.openai.available
-                          ? `可用模型：${runtime.openai.model}`
-                          : '模型增强待安全配置，稳定模式正常可用'}
+                      <p
+                        id="model-availability"
+                        aria-live="polite"
+                        className="mt-1.5 break-words text-[9px] leading-4 text-slate-500"
+                      >
+                        {runtime.glm.configured
+                          ? `${runtime.glm.model} 密钥已配置；案件外发已暂停，当前使用稳定模式，不消耗模型额度。`
+                          : '智谱密钥待配置；案件外发已暂停，稳定模式正常可用。'}
                       </p>
 
                       {result ? (
