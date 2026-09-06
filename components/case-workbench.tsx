@@ -760,9 +760,62 @@ export function CaseWorkbench() {
                     </span>
                   </div>
                 </div>
+                <section
+                  aria-label="调查判断"
+                  className={`mt-4 rounded-lg border p-3.5 ${
+                    result?.conflict.status === 'UNRESOLVED'
+                      ? 'border-rose-200 bg-rose-50/70'
+                      : result
+                        ? 'border-amber-200 bg-amber-50/70'
+                        : 'border-slate-200 bg-slate-50/80'
+                  }`}
+                >
+                  <div className="flex items-start gap-2.5">
+                    {result?.conflict.status === 'UNRESOLVED' ? (
+                      <ShieldAlert className="mt-0.5 size-4 shrink-0 text-rose-700" />
+                    ) : result ? (
+                      <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-700" />
+                    ) : (
+                      <ScanSearch className="mt-0.5 size-4 shrink-0 text-slate-500" />
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <h3 className="text-xs font-semibold text-slate-900">
+                          调查判断
+                        </h3>
+                        <Badge
+                          variant="outline"
+                          className={
+                            result?.conflict.status === 'UNRESOLVED'
+                              ? 'border-rose-200 text-rose-700'
+                              : result
+                                ? 'border-emerald-200 text-emerald-700'
+                                : 'text-slate-500'
+                          }
+                        >
+                          {result?.conflict.status === 'UNRESOLVED'
+                            ? '需进一步核验'
+                            : result
+                              ? '已形成结论'
+                              : '待核验'}
+                        </Badge>
+                      </div>
+                      <p className="mt-2 text-[11px] font-medium text-slate-700">
+                        {result
+                          ? result.conflict.title
+                          : '当前尚无系统核验结论'}
+                      </p>
+                      <p className="mt-1.5 text-[11px] leading-[1.55] text-slate-600">
+                        {result
+                          ? result.conflict.resolution
+                          : '客户陈述已记录，需结合账务、交易和规则记录完成核验。'}
+                      </p>
+                    </div>
+                  </div>
+                </section>
               </div>
 
-              <div className="mt-4 grid grid-cols-1 gap-4 @min-[680px]:grid-cols-[minmax(0,1fr)_340px]">
+              <div className="mt-4 grid grid-cols-1 gap-4 @min-[760px]:grid-cols-[minmax(0,1fr)_459px]">
                 <div className="min-w-0 space-y-4">
                   <div className="rounded-xl border bg-white shadow-[0_6px_24px_rgb(15_23_42/4%)]">
                     <div className="flex flex-wrap items-center justify-between gap-2 border-b px-5 py-3.5">
@@ -828,13 +881,13 @@ export function CaseWorkbench() {
                                     )
                                   }
                                   aria-expanded={active}
-                                  className="grid w-full grid-cols-[12px_82px_minmax(0,1fr)] gap-3 rounded-lg py-1 pr-2 text-left"
+                                  className="grid w-full grid-cols-[12px_minmax(0,1fr)] gap-x-3 gap-y-1 rounded-lg py-1 pr-2 text-left"
                                 >
                                   <EvidenceDot tone={event.tone} />
                                   <time className="pt-0.5 font-mono text-[10px] text-slate-400">
                                     {formatEvidenceTime(event.observedAt)}
                                   </time>
-                                  <div className="min-w-0 break-words">
+                                  <div className="col-start-2 min-w-0 break-words">
                                     <p className="text-xs font-semibold text-slate-800">
                                       {event.title}
                                     </p>
@@ -853,17 +906,17 @@ export function CaseWorkbench() {
                                   </div>
                                 </button>
                                 {active && (
-                                  <div className="mb-3 ml-[106px] mr-3 mt-2 rounded-lg border border-teal-700/15 bg-white/80 p-3">
-                                    <div className="flex items-center justify-between gap-3">
+                                  <div className="mb-3 ml-6 mr-3 mt-2 min-w-0 rounded-lg border border-teal-700/15 bg-white/80 p-3">
+                                    <div className="flex flex-wrap items-center justify-between gap-2">
                                       <span className="text-[10px] font-semibold text-teal-800">
                                         证据原文
                                       </span>
-                                      <span className="font-mono text-[9px] text-teal-700/70">
+                                      <span className="max-w-full break-all font-mono text-[9px] text-teal-700/70">
                                         {event.sourceSystem} ·{' '}
                                         {event.sourceRecordId}
                                       </span>
                                     </div>
-                                    <p className="mt-2 font-mono text-[10px] leading-5 text-slate-600">
+                                    <p className="mt-2 break-words font-mono text-[10px] leading-5 text-slate-600">
                                       {event.rawExcerpt}
                                     </p>
                                   </div>
@@ -1332,59 +1385,6 @@ export function CaseWorkbench() {
                           <ArrowRight data-icon="inline-end" />
                         )}
                       </Button>
-                    </div>
-                  </div>
-
-                  <div
-                    className={`rounded-xl border p-4 ${
-                      result?.conflict.status === 'UNRESOLVED'
-                        ? 'border-rose-200 bg-rose-50/70'
-                        : result
-                          ? 'border-amber-200 bg-amber-50/70'
-                          : 'border-slate-200 bg-slate-50/80'
-                    }`}
-                  >
-                    <div className="flex items-start gap-2.5">
-                      {result?.conflict.status === 'UNRESOLVED' ? (
-                        <ShieldAlert className="mt-0.5 size-4 shrink-0 text-rose-700" />
-                      ) : result ? (
-                        <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-700" />
-                      ) : (
-                        <ScanSearch className="mt-0.5 size-4 shrink-0 text-slate-500" />
-                      )}
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center justify-between gap-2">
-                          <p className="text-xs font-semibold text-slate-900">
-                            调查判断
-                          </p>
-                          <Badge
-                            variant="outline"
-                            className={
-                              result?.conflict.status === 'UNRESOLVED'
-                                ? 'border-rose-200 text-rose-700'
-                                : result
-                                  ? 'border-emerald-200 text-emerald-700'
-                                  : 'text-slate-500'
-                            }
-                          >
-                            {result?.conflict.status === 'UNRESOLVED'
-                              ? '需进一步核验'
-                              : result
-                                ? '已形成结论'
-                                : '待核验'}
-                          </Badge>
-                        </div>
-                        <p className="mt-2 text-[11px] font-medium text-slate-700">
-                          {result
-                            ? result.conflict.title
-                            : '当前尚无系统核验结论'}
-                        </p>
-                        <p className="mt-1.5 text-[11px] leading-[1.55] text-slate-600">
-                          {result
-                            ? result.conflict.resolution
-                            : '客户陈述已记录，需结合账务、交易和规则记录完成核验。'}
-                        </p>
-                      </div>
                     </div>
                   </div>
 
