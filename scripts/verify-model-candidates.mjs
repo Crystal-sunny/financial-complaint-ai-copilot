@@ -7,10 +7,9 @@ import { prepareCandidate } from './model-candidate-fixtures.mjs';
 const { investigateSyntheticCaseForEvaluation } =
   await import('../lib/server/pipeline-orchestrator.ts');
 
-const [firstArgument, secondArgument] = process.argv.slice(2);
-const suite = /^v[23456]$/.test(firstArgument ?? '') ? firstArgument : 'v2';
-const batchName = suite === firstArgument ? secondArgument : firstArgument;
-assert.ok(batchName, 'Provide a frozen batch name such as batch-1');
+const suite = 'v6';
+const batchName = process.argv[2];
+assert.ok(batchName, 'Provide a frozen batch name such as holdout-1');
 const datasetBaseName = `model-candidates-${suite}`;
 const datasetText = await readFile(
   new URL(`../evals/${datasetBaseName}.json`, import.meta.url),
@@ -39,11 +38,7 @@ const selectedIds =
   lock.batches[batchName] ?? lock.regressionBatches?.[batchName];
 assert.ok(selectedIds, `Unknown frozen batch: ${batchName}`);
 assert.ok(selectedIds.length >= 1 && selectedIds.length <= 3);
-const evaluationKind = Object.hasOwn(lock.batches, batchName)
-  ? ['v3', 'v4', 'v5', 'v6'].includes(suite)
-    ? 'FROZEN_HOLDOUT'
-    : 'FROZEN_BASELINE'
-  : 'DEVELOPMENT_REGRESSION';
+const evaluationKind = 'FROZEN_HOLDOUT';
 const implementationFiles = [
   '../lib/server/agent-prompts.ts',
   '../lib/server/case-data-policy.ts',
@@ -273,7 +268,7 @@ const report = {
   },
 };
 
-const outputDirectory = new URL('../../evals/results/', import.meta.url);
+const outputDirectory = new URL('../evals/results/', import.meta.url);
 await mkdir(outputDirectory, { recursive: true });
 const output = new URL(
   `glm-candidates-${suite}-${batchName}-${Date.now()}.json`,

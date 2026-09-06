@@ -1,7 +1,7 @@
 import type { ProviderMode } from '../domain';
 
 // Standing authorization: on 2026-09-05 the owner authorized automatic GLM use
-// for AI work on registered synthetic/desensitized project cases. V5 and V6 are
+// for AI work on registered synthetic/desensitized project cases. V6 is a
 // locally authored frozen synthetic set under that standing authorization.
 // Registration remains a technical data-boundary; clients cannot expand it.
 const authorizedCaseIds = new Set([
@@ -13,7 +13,7 @@ const authorizedCaseIds = new Set([
 function isRegisteredSyntheticCase(caseId: string) {
   return (
     authorizedCaseIds.has(caseId) ||
-    /^EVAL-V(?:2|3|4|5|6)-(?:00[1-9]|01[0-2])$/.test(caseId)
+    /^EVAL-V6-(?:00[1-9]|01[0-2])$/.test(caseId)
   );
 }
 

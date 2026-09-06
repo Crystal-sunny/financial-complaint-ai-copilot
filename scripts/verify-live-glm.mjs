@@ -57,7 +57,7 @@ for (const caseId of selectedId ? [selectedId] : caseIds) {
   results.push(summary);
   console.log(JSON.stringify(summary));
 }
-const reportDirectory = resolve('../evals/results');
+const reportDirectory = resolve('evals/results');
 await mkdir(reportDirectory, { recursive: true });
 const reportPath = resolve(
   reportDirectory,

@@ -267,7 +267,7 @@ const report = {
 };
 report.failed = report.total - report.passed;
 const markdown = `# 应用护栏真实代码回归\n\n- 时间：${report.generatedAt}\n- 版本：${report.datasetVersion}\n- 数据集 SHA256：${report.datasetSha256}\n- 通过：${report.passed}/${report.total}\n- 外部请求：${networkAttempts}\n- 模型评测：未运行；模型准确率：不适用\n\n| 场景 | 名称 | 结果 |\n|---|---|---|\n${results.map((item) => `| ${item.id} | ${item.name} | ${item.passed ? '通过' : '失败'} |`).join('\n')}\n\n结果只代表程序护栏，不代表模型语言理解、事实推理或提示注入识别率。\n`;
-const directory = new URL('../../evals/results/', import.meta.url);
+const directory = new URL('../evals/results/', import.meta.url);
 await mkdir(directory, { recursive: true });
 const filename = `guardrails-v1-${Date.now()}`;
 await writeFile(

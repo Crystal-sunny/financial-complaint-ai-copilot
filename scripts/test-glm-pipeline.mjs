@@ -160,7 +160,7 @@ await test('authorization enables configured GLM but does not authorize OpenAI o
   assert.equal(getRuntimeCapabilities().glm.available, true);
   assert.equal(getRuntimeCapabilities().openai.available, false);
   assert.doesNotThrow(() =>
-    assertInvestigationProviderAllowed('glm', 'EVAL-V5-012'),
+    assertInvestigationProviderAllowed('glm', 'EVAL-V6-012'),
   );
   assert.throws(() =>
     assertInvestigationProviderAllowed('openai', mockDatabase.cases[0].caseId),
@@ -172,7 +172,7 @@ await test('authorization enables configured GLM but does not authorize OpenAI o
 await test('isolated synthetic evaluation uses its supplied database and has no recorded fallback', async () => {
   const caseItem = {
     ...mockDatabase.cases[0],
-    caseId: 'EVAL-V2-003',
+    caseId: 'EVAL-V6-001',
     customerRequests: ['核验客户描述，但数据库中缺少所称成功流水。'],
   };
   const database = structuredClone(mockDatabase);
@@ -190,7 +190,7 @@ await test('non-template transaction denial triggers deterministic security esca
   const base = mockDatabase.cases[2];
   const caseItem = {
     ...base,
-    caseId: 'EVAL-V2-011',
+    caseId: 'EVAL-V6-009',
     rawText:
       '昨晚手机一直在我床头，凌晨连续发生的三笔消费我完全没有进行过，也没让别人替我操作。',
     customerRequests: ['核验三笔并确认账户安全。'],
@@ -209,7 +209,7 @@ await test('colloquial payment denial also triggers deterministic security escal
   const base = mockDatabase.cases[2];
   const caseItem = {
     ...base,
-    caseId: 'EVAL-V3-010',
+    caseId: 'EVAL-V6-010',
     rawText: '半夜这些付款我一笔都没点过，手机也一直在我这里。',
     customerRequests: ['核验交易并保护账户。'],
   };
@@ -227,7 +227,7 @@ await test('ownership question is not treated as an explicit transaction denial'
   const base = mockDatabase.cases[1];
   const caseItem = {
     ...base,
-    caseId: 'EVAL-V4-003',
+    caseId: 'EVAL-V6-003',
     rawText:
       '两次付款都成功了，但请先确认系统里的冲正是不是我的，不要拿别人的记录来处理。',
     customerRequests: ['确认系统里的冲正是不是我的。'],
@@ -246,7 +246,7 @@ await test('explicit unauthorized wording triggers deterministic security escala
   const base = mockDatabase.cases[2];
   const caseItem = {
     ...base,
-    caseId: 'EVAL-V4-009',
+    caseId: 'EVAL-V6-011',
     rawText: '凌晨三笔交易都未经我授权，还有陌生设备，请先转安全团队。',
     customerRequests: ['转安全团队核验。'],
   };
@@ -263,7 +263,7 @@ await test('application routing corrects a model misclassification before rule l
   const base = mockDatabase.cases[0];
   const caseItem = {
     ...base,
-    caseId: 'EVAL-V4-008',
+    caseId: 'EVAL-V6-008',
     rawText:
       '扣款最开始显示超时，后来状态更新成最终成功，金额1248.36元，请按最终状态核实。',
     customerRequests: ['按最终状态核实该笔扣款。'],
@@ -303,7 +303,7 @@ await test('missing approval rule forces an insufficient gate before disposition
   const result = await investigateSyntheticCaseForEvaluation(
     {
       ...base,
-      caseId: 'EVAL-V4-006',
+      caseId: 'EVAL-V6-006',
       customerRequests: ['确认当前有效的退款审批要求。'],
     },
     database,
@@ -361,7 +361,7 @@ await test('orphan reversal is downgraded before disposition can authorize waiti
   const result = await investigateSyntheticCaseForEvaluation(
     {
       ...mockDatabase.cases[1],
-      caseId: 'EVAL-V3-011',
+      caseId: 'EVAL-V6-007',
     },
     database,
   );
@@ -384,7 +384,7 @@ await test('amount-mismatched successful payments cannot establish a duplicate r
   const result = await investigateSyntheticCaseForEvaluation(
     {
       ...mockDatabase.cases[1],
-      caseId: 'EVAL-V4-002',
+      caseId: 'EVAL-V6-002',
     },
     database,
   );
@@ -407,7 +407,7 @@ await test('unbound scheduled debit is downgraded before refund disposition', as
   const result = await investigateSyntheticCaseForEvaluation(
     {
       ...mockDatabase.cases[0],
-      caseId: 'EVAL-V5-004',
+      caseId: 'EVAL-V6-004',
     },
     database,
   );
